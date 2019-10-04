@@ -66,8 +66,7 @@ _start_data = $123d
 // $0a:        snake direction (temporary copy of l03a6)
 
 // $22-$25     temporary during sub-functions
-// $4b-$4c     -unused-
-// $d7:        temporary during snake handler
+// $4b-$4c     temporaries during snake handler
 // $fb:        warm boot flag (temporary during restart)
 // $fc-$fe     -unused-
 
@@ -107,50 +106,19 @@ l1252	.byt $93,$00    // "SCORE:" (black)
 	.byt $b0,$01
 	.byt $b0,$01
 	.byt $20,$01
-#if 0
-        .byt $88,$02    // "HIGHSCORE:" (red)
-	.byt $89,$02
-	.byt $87,$02
-	.byt $88,$02
-	.byt $93,$02
-	.byt $83,$02
-	.byt $8f,$02
-	.byt $92,$02
-        .byt $85,$02
-        .byt $ba,$02
-#else
-        .byt $20,$02    // -unused-
-	.byt $20,$02
-	.byt $20,$02
-	.byt $20,$02
-	.byt $20,$02
-	.byt $20,$02
-	.byt $20,$02
-	.byt $20,$02
-        .byt $20,$02
-        .byt $20,$02
-#endif
-        .byt $20,$02    // blank, to be replaced by 6 digits
-        .byt $20,$02
-        .byt $20,$02
-        .byt $20,$02
-        .byt $20,$02
-        .byt $20,$02
-        .byt $20,$02
-        .byt $20,$06   // space, to be replaced by "EAT" (blue)
-        .byt $20,$06
-        .byt $20,$06
-l12cc   .byt $87,$95,$94,$20,$87,$8c,$95,$85,$83,$8b,$2a   // "GUT GLUECK!"
+l12c0   .byt $92,$81,$83,$85,$20                  // "Race to start: {o}"
+        .byt $94,$8f,$20
+        .byt $93,$94,$81,$92,$94,$ba,$1b
+l12cc   .byt $20,$20,$87,$95,$94,$20,             // " GUT GLUECK! "
+        .byt $87,$8c,$95,$85,$83,$8b,$38,$20,$20  // (leading/trailing blank needed to erase "start" message)
 
         // "GUTGLUECK" as user-defined characters, each letter circled:
         // table of bonus characters, need to be picked-up by player in this order
 l12d7   .byt $39,$3a,$3b,$39,$3c,$3a,$3d,$3e,$3f
-l12c2	.byt $39,$3a,$3b,$00,$39,$3c,$3a,$3d,$3e,$3f   // same with space between words
 
-l126c	.byt $88,$89,$87,$88,$93,$83,$8f,$92,$85,$ba  // "HIGHSCORE:"
 l1295   .byt $87,$92,$85,$81,$94   // "GREAT"
-l129a   .byt $93,$8d,$81,$8c,$8c,$20,$82,$8f,$8e,$95,$93    // "SMALL BONUS"
-        .byt $ba,$20,$b2,$b0,$b0,$b0,$20,$90,$94,$93        // ": 2000 PTS" (number will be replaced on screen)
+l129a   .byt $93,$8d,$81,$8c,$8c,$20,$82,$8f,$8e,$95,$93    // "SMALL BONUS: 2000 PTS"
+        .byt $ba,$20,$b2,$b0,$b0,$b0,$20,$90,$94,$93        // (number '2' is patched on screen)
 
         // Text used on game-end screen (lower-case ROM charset)
 l126d	.byt $48,$09,$07,$08,$13,$03,$0f,$12,$05,$3a        // "Highscore:"
@@ -174,7 +142,7 @@ l12ba   .byt $50,$12,$05,$13,$13,$20,   // "Press any key"
 init_game
 	lda #$00
 	sta $900e
-	lda #$19        // set screen color: screen:white border:white
+	lda #$19        // set screen bg colors: screen:white border:white
 	sta $900f
 	lda #$c2        // reset screen & character map addresses
 	sta $9005
@@ -234,60 +202,63 @@ l1615	lda l12ba-1,x   // print "Press any key"
         beq l162d
 
 l1666	lda #$02
-	sta v_plr_lives // init number of lives := 2
+	sta v_plr_lives // init number of spare lives := 2
 	lda #$00
 	sta $fb         // clear warm boot flag
         // fall-through
 
 l166f	                // ---- warm-boot / restart of game ----
 	jsr $e55f       // clear screen
-	lda #$ac        // set screen color: screen:pink border:purple
+	lda #$ac        // set screen bg colors: screen:light-orange border:blue
 	sta $900f
 	lda #$cf        // screen:$1000, color:$9400, user-def:$1C00
-	sta $9005       // screen:$1000, color:$9400, charmap:$1400
+	sta $9005
 
-	lda #$42        // loop to draw "food" on screen $1000...
+	lda #<$1000+2*22+1  // loop to draw "food" on screen $1000...
 	sta $00
 	sta $22
-	lda #$10
+	lda #>$1000+2*22+1
 	sta $01
-	lda #$94-$10
+	lda #>$9400+2*22+1
 	sta $23
-	ldx #$02
-l168e	ldy #$c5
-l1690	lda #$19        // "food" char code
+	ldx #23-4       // loop for number of rows
+l168e	ldy #22-2-1     // loop for number of columns per row (between border chars)
+l1690	lda #$19        // char code for "food"
 	sta ($00),y
 	lda #$07        // color: yellow
 	sta ($22),y
-	dey
-	bne l1690
-	lda #$07
-	sta $00
-	sta $22
-	inc $01
-	inc $23
-	dex
-	bne l168e
+        dey
+        bpl l1690
+        lda $00
+        clc
+        adc #$16
+        bcc l1691
+        inc $01
+        inc $23
+l1691   sta $00
+        sta $22
+        dex
+        bne l168e
 
 	ldx #$16        // draw horizontal borders at top & bottom
 l16b1	lda #$1c
-	sta $1000+2*22-1,x
+	sta $1000+1*22-1,x
 	lda #$1d
 	sta $1000+21*22-1,x
 	lda #$00
-	sta $9400+2*22-1,x
+	sta $9400+1*22-1,x
 	sta $9400+21*22-1,x
 	dex
 	bne l16b1
 
-	lda #$42        // draw vertical border at left and right side
+	lda #<$102c     // draw vertical border at left and right side
 	sta $00
 	sta $02
-	lda #$10
+	lda #>$102c
 	sta $01
-	lda #$94
+	lda #>$942c
 	sta $03
-	lda #$12        // counter for outer loop = border height
+	lda #$13        // counter for outer loop = border height
 	sta $08
 l16e2	ldy #$00        // offset left border
 	lda #$1d        // char code for vertical borders
@@ -305,13 +276,13 @@ l16e2	ldy #$00        // offset left border
         bcc l16f0
         inc $01
         inc $03
-l16f0   sta $00         // both pointers have same LSB
+l16f0   sta $00         // screen and color pointers have same LSB value
         sta $02
-	dec $08
+	dec $08         // end loop: next row
 	bne l16e2
 
-	ldx #42-1       // print status display at top of screen
-	ldy #42*2-1
+	ldx #22-1       // print status display at top of screen
+	ldy #22*2-1
 l1711	lda l1241,y
 	sta $9400,x
 	dey
@@ -321,21 +292,7 @@ l1711	lda l1241,y
 	dex
 	bpl l1711
 
-#if 0
-	lda #<$1020     // print highscore value in second row of screen
-        sta $08
-	lda #>$1020
-        sta $09
-        lda l123d+0
-        sta $22
-        lda l123d+1
-        sta $23
-        lda l123d+2
-        sta $24
-	jsr print_highscore
-#endif
-
-	lda #$16        // display "target" char in middle of screen: X/Y=10/12
+	lda #$1b        // display "target" char in middle of screen: X/Y=10/12
 	sta $1112
         lda #$00        // color green
 	sta $9512
@@ -353,6 +310,7 @@ l1711	lda l1241,y
 
 	lda #$03        // initialize skill = 3
 	sta v_plr_skill
+        jsr print_skill
 
 	ldx #$00        // clear all snakes: invalid direction value
 l1761	lda #$00
@@ -377,13 +335,24 @@ l1761	lda #$00
 	sta $09
 	jsr spawn_snake
 
-	lda v_plr_lives // display number of lives in bottom-left corner
-	beq l1793
-	tax
-	lda #$17        // char for player, drawn once for each life
-l178d	sta $11e3,x
-	dex
+	lda v_plr_lives // display number of spare lives in bottom-left corner
+	beq l178e
+	ldx #$00
+	lda #$17        // char for player
+l178d	sta $1000+22*22,x
+	inx
+        cpx v_plr_lives
 	bne l178d
+l178e	cpx #$02
+        bcs l1793
+        lda #$16        // char for dead player, drawn for each spent life
+l178f	sta $1000+22*22,x
+        lda #$07        // color: yellow
+	sta $9400+22*22,x
+	inx
+        cpx #$02
+	bcc l178f
+
 l1793	lda $fb         // warm boot -> init or restore score respectively
 	bne l17a4
 	lda #$26        // init delay factor
@@ -397,7 +366,7 @@ l17a4	jsr print_score // keep old score for "warm boot"
 
                         // FIXME user may get "boxed" into corner by letters
 l17b0	lda #$09        // ---- place bonus letters at random positions in playing field ----
-	sta $d7
+	sta $4b
         sty $22         // LSB of pointer: always 0, use Y instead
 l17b4	jsr $e094       // start loop: get RAND numbers
         ldy $8c         // calc address for letter: random offset 0..22*23-1
@@ -412,7 +381,7 @@ l17b5   clc
         lda ($22),y     // read this screen position
 	cmp #$19        // food char? (i.e. not other letter, or outside playing field)
 	bne l17b4       // no -> try another random position
-	ldx $d7
+	ldx $4b
 	lda l12d7-1,x   // get next bonus letter from sequence
 	sta ($22),y     // draw letter char
 	lda $23         // calc color address
@@ -421,13 +390,15 @@ l17b5   clc
 	sta $23
 	lda #$02        // color: red
 	sta ($22),y
-	dec $d7         // next character in iteration
+	dec $4b         // next character in iteration
 	bne l17b4
         ldy #$00
 
-	ldx #$0b
-l17de	lda l12cc-1,x   // print "good luck" message
-	sta $11e9,x
+	ldx #$0f
+l17de	lda l12c0-1,x   // print "Race to start" message
+	sta $1000+22*22+4-1,x
+        lda #$06        // color: blue
+	sta $9400+22*22+4-1,x
 	dex
 	bne l17de
 
@@ -440,8 +411,9 @@ l17de	lda l12cc-1,x   // print "good luck" message
         // end game init -> enter main loop
         jmp l17ea
 
-//-----------------------------------------------------------------
-//                      // Player control
+// ----------------------------------------------------------------------------
+// Player control: React on player input
+// (This function is start of the jump chain building the main loop.)
 
 l17ea   sei
         lda v_key_next  // any key-press detected since action handler?
@@ -547,102 +519,83 @@ l188a	lda $25
 	jsr check_player_pos
 	bcc l1857
 
-//-----------------------------------------------------------------
-//                      // Player status updates
+// ----------------------------------------------------------------------------
+// Player status updates
 
-                        // ---- print skill ----
-l1893	lda v_plr_skill // calculate skill%10 and skill/10
-	jsr div10
-        clc
-	adc #$30+$80    // add ROM char '0' to skill%10 digit
-	sta $1007       // print skill&10 digit
-	txa
-	adc #$30+$80    // add ROM char '0' to skill/10 digit
-	sta $1006       // print skill/10 digit
-
+l1893	
+        sty v_plr_face  // reset player face: closed/not eating
 	lda v_plr_ready // player ready?
 	beq l18c9       // no -> do not score for eating food
-l18be	lda ($03),y     // read char under player figure
+	lda ($03),y     // read char under player figure
 	cmp #$19        // "food" char?
 	bne l18c9
 	lda #$10        // score +10
 	ldx #$00
 	jsr add_score
+	sta v_plr_face  // player face: open/eating
 
 l18c9	lda v_plr_ready // player "ready"?
 	bne l1904       // yes -> skip obsolete check for home position
-	lda ($03),y     // read char under player figure
-	cmp #$16        // home char?
-	bne l1904
-	lda #$01        // yes -> mark player as ready
+        lda $03         // at player position?
+        cmp #<$1112     // (note not reading char to allow detection while riding snake tail)
+        bne l1904
+        lda $04
+        cmp #>$1112
+        bne l1904
+	lda #$01        // matching address -> mark player as ready
 	sta v_plr_ready
-	lda #$05+$80    // print "EAT" in upper right corner (using ROM chars)
-	sta $1027
-	lda #$01+$80
-	sta $1027+1
-	lda #$14+$80
-	sta $1027+2
-	lda v_plr_skill // any skill left?
+	ldx #$0f        // print "good luck" message (replacing "Race to start" message)
+l18cc	lda l12cc-1,x
+	sta $1000+22*22+4-1,x
+        lda #$02        // color: red
+	sta $9400+22*22+4-1,x
+	dex
+	bne l18cc
+	lda v_plr_skill // any skill left? (implies initial skill <10, else BCD conversion req'ed here)
 	beq l1900
 	tax             // add skill * 100 points to score
         tya
 	jsr add_score
 l1900	lda #$04        // initialize skill to 4 ("level II")
 	sta v_plr_skill
+        jsr print_skill
+        // fall-through
 
-l1904	sty v_plr_face  // reset player face: closed/not eating
-
-	lda ($03),y     // read char under player
+l1904	lda ($03),y     // read char under player
 	cmp #$08        // snake head?
 	bcs l1915
 l190c	lda #$f0        // kill player
 	sta v_plr_dead
 	lda #$d8        // sound effect
 	sta $900c
-        // FIXME improve visibility & sound upon player being eaten
+        jmp l1af2
 
 l1915	cmp #$12        // hit snake tail? (#$12-#$15)
-	bcc l1965
+	bcc l196b
 	cmp #$16
-	bcs l1965
+	bcs l196b
 	lda v_plr_ready // yes; player ready?
 	beq l195d
 	lda $028d       // yes; SHIFT key or joystick FIRE pressed?
 	bne l192d
 	lda $911f
 	and #$20
-	bne l195d       // neither -> skip
+	bne l195d       // neither -> ride tail, but do not eat
 l192d   jsr start_eating_snake
-        bcc l196b
+        bcc l19a0
 	lda #$60        // change player status to "eating snake"
 	sta v_plr_dead
-	bne l196b
+	bne l19a0
 l195d	lda #$07        // score +7
 	ldx #$00
 	jsr add_score
 	clc
-	bcc l196b       // always true
+	bcc l19a0       // always true
 
-l1965	cmp #$19        // found food?
-	bne l196b
-	sta v_plr_face  // yes -> player face: open/eating
-
-l196b	lda v_game_time // time score
-	asl
-	asl
-	asl
-	asl
-	bne l197e       // only once per 16 iterations
-	lda v_snk_cnt   // any snakes alive?
-	beq l197e
-	asl             // yes -> score +2 for each living snake
-        ldx #$00
-	jsr add_score
-
-l197e	lda v_plr_ready // player ready?
-	beq l19a1       // no -> ignore eating apple or snake symbols
+l196b   lda v_plr_ready // player ready?
+	beq l19a0       // no -> ignore eating apple or snake symbols
 	lda ($03),y
-	cmp #$36        // found apple?
+	cmp #$1f        // found apple?
 	bne l1990
         ldx #$02        // yes: grant 250 points
 	lda #$50
@@ -650,8 +603,8 @@ l197e	lda v_plr_ready // player ready?
 	clc
 	bcc l199d       // increase skill +2
 
-l1990	cmp #$35        // found snake grant symbol?
-	bne l19a1
+l1990	cmp #$1e        // found snake grant symbol?
+	bne l19a0
 	lda #<$1112     // address for head of new snake: center of screen
         sta $08
 	lda #>$1112
@@ -659,6 +612,19 @@ l1990	cmp #$35        // found snake grant symbol?
 	jsr spawn_snake // spawn new snake
 l199d	inc v_plr_skill // increase skill +2
 	inc v_plr_skill
+        jsr print_skill
+
+l19a0   lda v_game_time // time score
+	asl
+	asl
+	asl
+	asl
+	bne l19a1       // only once per 16 iterations
+	lda v_snk_cnt   // any snakes alive?
+	beq l19a1
+	asl             // yes -> score +2 for each living snake
+        ldx #$00
+	jsr add_score
 
                         // ---- skill request handling ----
 l19a1	lda v_key_cur   // poll keyboard
@@ -673,7 +639,7 @@ l19a2	lda v_plr_skill
 	bne l19c2       // not 0, hence score >9999 -> OK
 	lda v_plr_score+1 // middle digit pair of score
 	cmp #$10        // >=10 (BCD)?
-	bcc l19d0       // no -> disallow
+	bcc l19c8       // no -> disallow
 l19c2   sed             // enable BCD arithmetics for adc/sbc
 	sec
 	lda v_plr_score+1 // subtract 1000 from score
@@ -682,10 +648,25 @@ l19c2   sed             // enable BCD arithmetics for adc/sbc
 	lda v_plr_score+2
         sbc #$00          // update highest pair in case of underflow (01.0x.xx -> 00.9x.xx)
 	sta v_plr_score+2
-	cld
-	jsr print_score
+        cld
+	inc v_plr_skill // increase skill +2 (i.e. total +4 together with following inc)
+	inc v_plr_skill
+        bne l19ca
+l19c8   cmp #$05        // middle digit >= 5, i.e. score >= 500?
+        bcc l19d0       // no -> reject
+        sed             // enable BCD arithmetics for adc/sbc
+	sec
+	lda v_plr_score+1 // subtract 500 from score
+        sbc #$05
+        sta v_plr_score+1
+	lda v_plr_score+2
+        sbc #$00          // update highest pair in case of underflow (01.0x.xx -> 00.9x.xx)
+	sta v_plr_score+2
+        cld
+l19ca   jsr print_score
 	inc v_plr_skill // increase skill +2
 	inc v_plr_skill
+        jsr print_skill
         jmp l1aa3
                         // ---- game end request handling ----
 l19d0	lda v_key_cur   // poll keyboard
@@ -693,10 +674,10 @@ l19d0	lda v_key_cur   // poll keyboard
 	beq l19d9
 	cmp #$27        // key F1? (added for emulator)
 	bne l1aa3
-l19d9	lda v_plr_bonus_cnt  // all 10 bonus chars picked-up?
-	cmp #$0a
-	bcc l1a81       // no -> disallow
-        jmp game_won
+l19d9	lda v_plr_bonus_cnt
+	cmp #$09        // all 9 bonus chars picked-up?
+	bcc l1a81
+        jmp game_won    // yes -> level finished
 l1a81	lda v_plr_skill // skill zero?
 	bne l1aa3       // no -> disallow
 	lda v_plr_lives // any lifes left?
@@ -705,11 +686,12 @@ l1a81	lda v_plr_skill // skill zero?
 l1a9d	dec v_plr_lives // yes; remove one life
 	jmp restart_game  // restart game, however keeping score
 
-//-----------------------------------------------------------------
-//                      // Place player: Sound
+// ----------------------------------------------------------------------------
+// Place player: Sound
 
+        // FIXME move sound triggers into handlers above; move player drawing to above
 l1aa3	lda ($03),y     // check char at player position
-	cmp #$35        // grant symbol found?
+	cmp #$1e        // grant symbol found?
 	bcc l1aae
 	lda #$be        // generate note 266Hz
 	sta $900c
@@ -758,14 +740,18 @@ l1af3	lda v_plr_dead  // player dead?
 l1af8	lda ($03),y     // read char at player pos: snake still on top?
 	cmp #$16
 	bcc l1b42       // yes -> skip (cannot revive at this position currently)
-	dec v_plr_lives // remove one life
 	sty v_plr_dead  // revive player
-	lda #$20        // remove one life from display (i.e. player symbol in bottom-left corner)
-	sta $11e3,x
+	dec v_plr_lives // remove one life
+        dex
+	lda #$16        // remove one life from display (i.e. player symbol in bottom-left corner)
+	sta $1000+22*22,x
+        lda #$07        // color: yellow
+	sta $9400+22*22,x
 
 l1b42   lda v_key_cur   // remember last processed key for filtering
         sta v_key_prev
 
+        // FIXME use clock instead of constant delay
         ldy v_game_speed // ---- time delay (I) ----
 l1b44	ldx #$ff
 l1b46	dex
@@ -796,6 +782,23 @@ l1310   inx
         sbc #10
         bcs l1310
         adc #10
+        rts
+
+// ----------------------------------------------------------------------------
+// Sub-function: Print skill counter value to the screen
+// - Parameters: none
+// - Side-effects: invalidates X
+// - Results: none
+
+print_skill
+        lda v_plr_skill // calculate skill%10 and skill/10
+	jsr div10
+        clc
+	adc #$30+$80    // add ROM char '0' to skill%10 digit
+	sta $1000+0*22+7
+	txa
+	adc #$30+$80    // add ROM char '0' to skill/10 digit
+	sta $1000+0*22+6
         rts
 
 // ----------------------------------------------------------------------------
@@ -865,7 +868,7 @@ l1336   lda $22,x
         inx
         dey
         bpl l1336
-#if 0
+
         ldy #$00        // remove leading zeros
 l1337   lda ($08),y
         cmp #$30        // char for '0'?
@@ -875,17 +878,21 @@ l1337   lda ($08),y
         iny
         cpy #$06-1      // leave last zero
         bcc l1337
-#endif
+
 l1338	ldy #$00
 	rts
 
 // ----------------------------------------------------------------------------
 // Sub-function: Check new player position for movement
+//
 // After moving the player figure upon user input, the function checks if the
 // move to the given address is allowed. If not, the caller has to undo the change.
+// Some moves are allowed depending on state variables; allowing may modify that
+// state.
 //
 // - Parameters: global $03-$04: new player address
-// - Result: status.C 0:nOK, 1:OK
+// - Results: status.C 0:nOK, 1:OK
+//            temporary $25 is set to non-zero upon failure
 //
 check_player_pos
 	lda ($03),y     // read char at player address on screen
@@ -899,6 +906,7 @@ check_player_pos
         and #20
         bne l1363       // no SHIFT or joystick-fire -> disallow
 l1352	dec v_plr_skill // reduce "skill" -1
+        jsr print_skill
 	sec             // allow movement
 	rts
 l1356	cmp #$08        // hit snake head?
@@ -913,22 +921,26 @@ l135e	cmp #$1c        // is horizontal or vertical border?
 	bcc l13fa       // no, i.e. anything else -> allow
 
         ldx v_plr_bonus_cnt // get number of eaten bonus chars as index
-        cpx #$0a        // all letters done already?
+        cpx #$09        // all letters done already?
         bcs l1363
-        cmp l12c2,x     // is next expected letter in sequence?
+        cmp l12d7,x     // is next expected letter in sequence?
         bne l1363
-        lda v_plr_ready // player ready?
+        ldy v_plr_ready // player ready?
 	beq l1363       // not ready -> do not allow eating letters
-        lda l12c2,x
-	sta $11ea,x     // mark letter as done in status bar
+	cpx #$03        // skip blank in bonus letter message (i.e. after "GUT")
+	bcc l13f7
+        inx
+l13f7	sta $1000+22*22+6,x
+        ldy #$00
+        lda #$02        // color: red
+	sta $9400+22*22+6,x
 	inc v_plr_bonus_cnt // increase number of consumed letters
-	cpx #$02        // skip blank in bonus letter sequence (i.e. after "GUT")
-	bne l13f7
-	inc v_plr_bonus_cnt
-l13f7	inc v_plr_skill // increase skill +1
-	ldx #$02
+	inc v_plr_skill // increase skill +2
+	inc v_plr_skill
+        jsr print_skill
+	ldx #$02        // increase score by 250
 	lda #$50
-	jsr add_score   // increase score by 250
+	jsr add_score
 l13fa	sec             // return: allow
 	rts
 l1363	lda #$aa        // result = do not allow
@@ -946,9 +958,9 @@ undraw_player
 	clc
 	adc #$84
 	sta $23
-	lda #$07        // color
+	lda #$07        // color: yellow
 	sta ($22),y
-	lda #$1a        // place excrement
+	lda #$1a        // char for excrement
 	sta ($03),y
 	rts
 
@@ -985,7 +997,7 @@ l1a64	ldx #$10        // yes -> grant 1000 points
 
 l19f0	ldx #$15        // print "SMALL BONUS: 2000 PTS" (ATTN: value hard-coded)
 l19f8	lda l129a-1,x
-	sta $11e3,x
+	sta $1000+22*22-1,x
 	lda #$02        // color: red
 	sta $95e3,x
 	dex
@@ -994,11 +1006,11 @@ l19f8	lda l129a-1,x
 	bne l1a28
 	ldx #$05        // yes -> print "GREAT", replacing "SMALL"
 l1a1f	lda l1295-1,x
-	sta $11e3,x
+	sta $1000+22*22-1,x
 	dex
 	bne l1a1f
 	lda #$33+$80    // patch "BONUS" message: replace digit '2' with '3'
-	sta $11e3+14
+	sta $1000+22*22+13
 
 l1a28   lda $a2         // time delay: 10 seconds
         sta $22
@@ -1027,7 +1039,7 @@ restart_game
 	sta $fb
 	jmp l166f       // to start of game
 
-//-----------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // End game due to player death or skill defeat
 // - jumped to when player defeats after losing all lifes or skill
 // - print summary of score and highscore
@@ -1063,17 +1075,17 @@ l1b3f	jsr $e5c3       // init VIC chip
 
 	ldx #$0b        // print "Last Score:"
 l1f34	lda l1f8f-1,x
-	sta $1000+5*22+5-1,x
+	sta $1000+5*22+0-1,x
 	lda #$02        // color: red
-	sta $9400+5*22+5-1,x
+	sta $9400+5*22+0-1,x
 	lda #$06        // color: blue: for score values printed in next row
-	sta $9400+8*22+7-1,x
+	sta $9400+5*22+13-1,x
 	dex
 	bne l1f34
 
-	lda #<$1000+8*22+7  // print last player score value
+	lda #<$1000+5*22+13  // print last player score value
 	sta $08
-	lda #>$1000+8*22+7
+	lda #>$1000+5*22+13
 	sta $09
         lda v_plr_score+0
         sta $22
@@ -1085,17 +1097,17 @@ l1f34	lda l1f8f-1,x
 
 	ldx #$0a        // print "Highscore:"
 l1f14	lda l126d-1,x
-	sta $1000+11*22+5-1,x
+	sta $1000+8*22+0-1,x
 	lda #$02        // color: red
-	sta $9400+11*22+5-1,x
+	sta $9400+8*22+0-1,x
 	lda #$06        // color: blue: for score values printed in next row
-	sta $9400+14*22+7-1,x
+	sta $9400+8*22+13-1,x
 	dex
 	bne l1f14
 
-	lda #<$1000+14*22+7     // print highscore value
+	lda #<$1000+8*22+13  // print highscore value
         sta $08
-	lda #>$1000+14*22+7
+	lda #>$1000+8*22+13
         sta $09
         lda l123d+0
         sta $22
@@ -1107,19 +1119,21 @@ l1f14	lda l126d-1,x
 
         ldx #$10
 l1f40	lda l1330-1,x   // print "Try again?"
-	sta $1000+20*22+3-1,x
+	sta $1000+20*22+0-1,x
         lda #$02
-        sta $9400+20*22+3-1,x
+        sta $9400+20*22+0-1,x
 	dex
 	bne l1f40
 
 l1f44   lda $cb         // wait for key 'Y', 'Z' or 'N'
         tax
-        cmp #$0b        // key 'Y'
+        cmp #$0b        // key 'Y'?
         beq l1f79
-        cmp #$21        // key 'Z'
+        cmp #$21        // key 'Z'?
         beq l1f79
-        cmp #$1c        // key 'N'
+	cmp #$20        // space key?
+        beq l1f79
+        cmp #$1c        // key 'N'?
         bne l1f44
 l1f79	lda $cb         // wait for all keys released
 	cmp #$40
@@ -1176,12 +1190,13 @@ lspl3	sta $9005
 // ----------------------------------------------------------------------------
 // User-defined characters
 // - 64 user-defined characters, 8x8 bit each
-// - must start at $1c00, where the data is read by VIA HW (register $9005)
+// - start is fixed at $1c00, where the data is read by VIA HW (register $9005)
 // - note address is selected so that char codes $80-$ff are mapped to
-//   reverse character definitions in ROM (i.e. address cannot be changed!)
+//   reverse character definitions in ROM (i.e. address cannot be changed!).
+//   Reverse video mode is enabled (VIA $900f, bit 3) so that those appear normally
 
 // fill up possible gap before fixed start address of this section
-// ATTENTION: assembler "xa" will not generate error if the gap has negative size
+// ATTN: assembler "xa" will not generate error if the filled size is negative
 .dsb $1c00 - *, 0
 * = $1c00
 
@@ -1196,27 +1211,27 @@ l1c00	.byt $00,$58,$58,$5c,$5e,$4a,$7a,$7e    // #$00: snake head: upwards & clo
 	.byt $00,$00,$ff,$ff,$ff,$ff,$00,$00    // #$08: snake middle: horizontal
 	.byt $3c,$3c,$3c,$3c,$3c,$3c,$3c,$3c    // #$09:               vertical
 	.byt $3c,$7c,$f8,$f8,$f0,$f0,$00,$00    // #$0a: snake middle: corners
-	.byt $00,$00,$c0,$f0,$f8,$f8,$7c,$3c
-	.byt $00,$00,$03,$0f,$1f,$1f,$3e,$3c
-	.byt $3c,$3e,$1f,$1f,$0f,$03,$00,$00
+	.byt $00,$00,$c0,$f0,$f8,$f8,$7c,$3c    // #$0b
+	.byt $00,$00,$03,$0f,$1f,$1f,$3e,$3c    // #$0c
+	.byt $3c,$3e,$1f,$1f,$0f,$03,$00,$00    // #$0d
 	.byt $3c,$5e,$ef,$f7,$e7,$ff,$7e,$3c    // #$0e: snake middle: 180° turn
-	.byt $3c,$7e,$ff,$e7,$d7,$bf,$7e,$3c
-	.byt $3c,$7e,$ff,$e7,$ef,$f7,$fa,$3c
-	.byt $3c,$7e,$fd,$eb,$e7,$ff,$7e,$3c
+	.byt $3c,$7e,$ff,$e7,$d7,$bf,$7e,$3c    // #$0f
+	.byt $3c,$7e,$ff,$e7,$ef,$f7,$fa,$3c    // #$10
+	.byt $3c,$7e,$fd,$eb,$e7,$ff,$7e,$3c    // #$11
 	.byt $00,$00,$f8,$fe,$fe,$f8,$00,$00    // #$12: snake tail: end at right
 	.byt $00,$00,$1f,$7f,$7f,$1f,$00,$00    // #$13:             end at left
 	.byt $00,$18,$18,$3c,$3c,$3c,$3c,$3c    // #$14:             end at top
 	.byt $3c,$3c,$3c,$3c,$3c,$18,$18,$00    // #$15:             end at bottom
-	.byt $00,$3c,$42,$5a,$5a,$42,$3c,$00    // #$16: target
+	.byt $00,$7e,$99,$bd,$e7,$db,$7e,$00    // #$16: player dead
 	.byt $7e,$99,$99,$ff,$bd,$c3,$ff,$7e    // #$17: player closed
 	.byt $7e,$99,$ff,$c3,$81,$c3,$e7,$7e    // #$18: player open
 	.byt $00,$00,$18,$24,$24,$18,$00,$00    // #$19: food (score points)
 	.byt $00,$00,$00,$00,$08,$00,$00,$00    // #$1a: excrement
-	.byt $00,$7e,$99,$ff,$e7,$db,$7e,$00    // #$1b: player dead
+	.byt $00,$3c,$42,$5a,$5a,$42,$3c,$00    // #$1b: target
 	.byt $00,$00,$00,$ff,$ab,$d5,$ab,$ff    // #$1c: border horizontal
 	.byt $ff,$ab,$d5,$ab,$d5,$ab,$d5,$ff    // #$1d: border vertical
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
+	.byt $70,$a8,$f8,$8e,$7b,$1f,$10,$1f    // #$1e: symbol: grant level + snake
+	.byt $06,$0e,$08,$3c,$7e,$7e,$7e,$3c    // #$1f: apple: score bonus
 
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$20: blank
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
@@ -1228,7 +1243,6 @@ l1c00	.byt $00,$58,$58,$5c,$5e,$4a,$7a,$7e    // #$00: snake head: upwards & clo
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
-	.byt $12,$12,$12,$12,$00,$00,$12,$00    // #$2a: fat exclamation mark '!'
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
@@ -1239,32 +1253,31 @@ l1c00	.byt $00,$58,$58,$5c,$5e,$4a,$7a,$7e    // #$00: snake head: upwards & clo
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
-	.byt $70,$a8,$f8,$8e,$7b,$1f,$10,$1f    // #$35: symbol: grant level + snake
-	.byt $06,$0e,$08,$3c,$7e,$7e,$7e,$3c    // #$36: apple: score bonus
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
-	.byt $7e,$81,$bd,$a1,$ad,$a5,$bd,$7e    // #$39: {G}
-	.byt $7e,$81,$a5,$a5,$a5,$a5,$bd,$7e    // #$3a: {U}
-	.byt $7e,$81,$b9,$91,$91,$91,$91,$7e    // #$3b: {T}
-	.byt $7e,$81,$a1,$a1,$a1,$a1,$bd,$7e    // #$3c: {L}
-	.byt $7e,$81,$bd,$a1,$b9,$a1,$bd,$7e    // #$3d: {E}
-	.byt $7e,$81,$bd,$a1,$a1,$a1,$bd,$7e    // #$3e: {C}
-	.byt $7e,$81,$a5,$a9,$b1,$a9,$a5,$7e    // #$3f: {K}
+	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
+	.byt $00,$00,$00,$00,$00,$00,$00,$00    // - unused -
+	.byt $12,$12,$12,$12,$00,$00,$12,$00    // #$38: double exclamation mark '!!'
+	.byt $7e,$81,$bd,$a1,$ad,$a5,$bd,$7e    // #$39: bonus letter: {G}
+	.byt $7e,$81,$a5,$a5,$a5,$a5,$bd,$7e    // #$3a:               {U}
+	.byt $7e,$81,$b9,$91,$91,$91,$91,$7e    // #$3b:               {T}
+	.byt $7e,$81,$a1,$a1,$a1,$a1,$bd,$7e    // #$3c:               {L}
+	.byt $7e,$81,$bd,$a1,$b9,$a1,$bd,$7e    // #$3d:               {E}
+	.byt $7e,$81,$bd,$a1,$a1,$a1,$bd,$7e    // #$3e:               {C}
+	.byt $7e,$81,$a5,$a9,$b1,$a9,$a5,$7e    // #$3f:               {K}
 
-	.byt $7e,$99,$99,$ff,$bd,$c3,$ff,$7e    // #$17: player closed
-	.byt $7e,$99,$ff,$c3,$81,$c3,$e7,$7e    // #$18: player open
-
-// player closed   open           dead
+// player char:
+// =normal=        =eating=       ==dead==
 // .xxxxxx.        .xxxxxx.       ........
-// x..xx..x        x..xx..x       ........
-// x..xx..x        xxxxxxxx       .xxxxxx.
-// xxxxxxxx        xx....xx       x..xx..x
-// x.xxxx.x        x......x       xxxxxxxx
-// xx....xx        xx....xx       xxx..xxx
-// xxxxxxxx        xxx..xxx       xx.xx.xx
-// .xxxxxx.        .xxxxxx.       .xxxxxx.
+// x..xx..x        x..xx..x       .xxxxxx.
+// x..xx..x        xxxxxxxx       x..xx..x
+// xxxxxxxx        xx....xx       x.xxxx.x
+// x.xxxx.x        x......x       xxx..xxx
+// xx....xx        xx....xx       xx.xx.xx
+// xxxxxxxx        xxx..xxx       .xxxxxx.
+// .xxxxxx.        .xxxxxx.       ........
 
-//-----------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Sub-function: Snake direction handler
 // - Parameter: A = direction: up:$20,left:$60,down:$a0,right:$e0
 // - Result: status.C 0:nOK, 1:OK
@@ -1356,7 +1369,7 @@ l1be0	jsr check_snake_pos
 l1beb	sty $25
 	bcc l1bb1       // always branch (CC asserted)
 
-//-----------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Sub-sub-function: Check if new snake position is allowed
 // - Result: status.C: 0:nOk, 1:OK
 //
@@ -1388,32 +1401,24 @@ l1c20	cmp #$16        // any part of a snake?
 	sta $23
 	lda ($22),y     // read color code of snake we're hitting
 	and #$07
-	sta $22         // backup color code
-	sty $23
-	lda $d7         // get loop variable of current snake (i.e. index * 25)
-	beq l1c37
-l1c30	inc $23         // calc index/25
-	sec
-	sbc #$25
-	bne l1c30
-l1c37	lda $23
-	clc
-	adc #$02
-	cmp $22         // is color == index/25 + 2?
-	bne l1c42       // no, i.e. not the same snake -> do not allow
+        sec
+        sbc #$02        // reverse mapping of color code -> snake instance (i.e. reverse of drawing)
+	cmp $4c         // compare to index of snake main handler is currently handling
+	bne l1c42       // not the same snake instance -> do not allow
 l1c40	sec             // result: OK
 	rts
 l1c42	clc             // result: not OK
 	rts
 
-//-----------------------------------------------------------------
-//                      // Snake main tick function
+// ----------------------------------------------------------------------------
+// Snake main tick function
 
 l1c44	ldx #$00        // start of loop across snakes
-l1c46	stx $d7         // backup loop control variable; ATTN: X is 25*iteration index
+        stx $4c
+l1c46	stx $4b         // backup loop control variable; ATTN: X is 25*iteration index
 	lda l03a6,x     // snake instance inactive?
 	bne l1c50
-	jmp l1e15       // yes -> skip this instance
+l1c4c	jmp l1e15       // yes -> skip this instance
 
 l1c50	sta $0a         // temp copy of current direction
 	sta $24         // backup direction (for comparison after direction change)
@@ -1422,7 +1427,27 @@ l1c50	sta $0a         // temp copy of current direction
 	lda l0384+1,x
 	sta $09
 
-	jsr $e094       // get RAND number
+        lda $0a         // was instance stalled when spawning? (due to overlap)
+        and #$0f
+        beq l1c60
+        lda ($08),y
+        cmp #$16        // still overlapping any char of other snake?
+        bcc l1c4c       // yes -> skip this instance
+        lda $0a         // no -> clear stall flag from direction indicator
+        and #$f0
+        sta $0a
+        sta $24
+        lda $08         // calc color address of snake head
+        sta $22
+	lda $09
+	clc
+	adc #$84
+	sta $23
+        lda $4c
+	adc #$02        // snake head color code: red ... yellow
+	sta ($22),y
+
+l1c60   jsr $e094       // get RAND number
 	lda $8d
 	and #$e0
 	cmp #$e0        // with P=75% do not change direction
@@ -1465,7 +1490,7 @@ l1c9c	lda $0a         // try to turn 90° right
 	adc #$80
 	jsr move_and_check_snake_pos
 
-l1cbc	ldx $d7         // update snake status in array with temporaries
+l1cbc	ldx $4b         // update snake status in array with temporaries
 	lda $0a
 	sta l03a6,x     // write new direction
 	lda $08         // store new head address in temporary BEFORE the address array
@@ -1488,7 +1513,7 @@ l1ce4	lda l0382+1,x
 	beq l1d21       // same address -> do not write tail
 l1ceb	dex
 	dex
-	cpx $d7         // end loop: compare next char address
+	cpx $4b         // end loop: compare next char address
 	bne l1cdd
                         // --- remove snake tail ---
         lda v_plr_ready // player ready?
@@ -1499,7 +1524,7 @@ l1ceb	dex
 	lda $23
 	cmp #>$1112
 	bne l1cf0
-	lda #$16        // char for player "target"
+	lda #$1b        // char for player "target"
 	bne l1d04
 l1cf0   lda $22
         cmp $03
@@ -1507,36 +1532,36 @@ l1cf0   lda $22
         lda $23
         cmp $04
         bne l1cf1
-        lda #$1b        // char for dead player
+        lda #$16        // char for dead player
 	bne l1d04
 l1cf1   lda $8f         // get RAND number: decide char to leave behind tail
-	and #$bf
-	cmp #$35        // char for grant of new snake (P=8%)
+	and #$7f
+	cmp #$1e        // char for grant of new snake (probability 1/128 ~= 8%)
 	beq l1d04
-	cmp #$36        // char for score (i.e. apple; P=8%)
+	cmp #$1f        // char for score (i.e. apple)
 	beq l1d04
 	lda #$1a        // else: char for excrement
 l1d04	sta ($22),y     // write char behind snake tail
-	sta $8f
+	sta $25         // backup char code
 	clc
 	lda $23         // calc color address
 	adc #$84
 	sta $23
-	lda $8f         // check written char code again
-	cmp #$35
+	lda $25         // derive color depending on char code
+	cmp #$1e
 	beq l1d19
-	cmp #$36
+	cmp #$1f
 	bne l1d1a
 l1d19	lda #$04        // color purple, if special char
 	bne l1d1f
-l1d1a	cmp #$16
+l1d1a	cmp #$1b
         bne l1d1d
         lda #$00        // color black for home char
 	beq l1d1f
-l1d1d	lda #$07        // else: yellow for excrement or dead player
+l1d1d	lda #$07        // color yellow for excrement or dead player
 l1d1f	sta ($22),y     // write color code for char behind tail
 
-l1d21	lda $d7         // --- shift all addresses in snake array ---
+l1d21	lda $4b         // --- shift all addresses in snake array ---
 	clc             // (note this copies newly calc'ed addr into pos. of snake head)
 	adc #$22
 	tax
@@ -1546,10 +1571,10 @@ l1d28	lda l0382-2,x   // starting at tail: copy address of preceding segment
 	sta l0382+1,x
 	dex
 	dex
-	cpx $d7
+	cpx $4b
 	bne l1d28
 
-l1d41	lda $0a         //  --- write char for snake head ---
+	lda $0a         //  --- write char for snake head ---
 	lsr             // map direction $20,$60,$a0,$e0 -> 1,3,5,7: char for snake head, open
 	lsr
 	lsr
@@ -1572,18 +1597,12 @@ l1d58	txa
 	adc #$84
 	sta $23
 	sty $25
-	ldx $d7         // restore X
-	txa
-	beq l1d6f
-l1d68	inc $25         // loop to calculate X/25 (i.e. snake index 0,1,...)
-	sec
-	sbc #$25
-	bne l1d68
-l1d6f	lda $25
+        lda $4c
 	clc
 	adc #$02        // snake head color code: red ... yellow
 	sta ($22),y
 
+	ldx $4b         // restore X
 	lda l0386,x     // --- write middle char to former pos of snake head ---
 	sta $22
 	lda l0386+1,x
@@ -1647,7 +1666,7 @@ l1ddd	lda l0384-2,x   // compare tail address with all preceding snake segments
 	beq l1e15       // equal address found -> skip writing tail
 l1deb	dex
 	dex
-	cpx $d7
+	cpx $4b
 	bne l1ddd
 	lda $22         // not found -> determine char for snake tail
         sec
@@ -1671,7 +1690,8 @@ l1e0d	//cmp #$ea
 l1e13	sta ($22),y     // write snake tail char
 
 l1e15	ldy #$00        // ---- end loop: handling of one snake instance ---
-	lda $d7
+        inc $4c
+	lda $4b
 	clc
 	adc #$25        // increment snake instance pointer for iteration
 	tax
@@ -1687,7 +1707,7 @@ l1e25	lda v_plr_dead
 	jmp l190c       // yes -> kill player
 
 l1e35	lda v_snk_cnt   // all snakes dead?
-	beq l1e4d
+	beq l1e4d       // yes -> skip sound
 	lda v_game_time
 	and #$04
 	beq l1e45
@@ -1706,9 +1726,10 @@ l1e51	dex
 
 	jmp l17ea       // loop back to player actions
 
-//-----------------------------------------------------------------
+// ----------------------------------------------------------------------------
 //                      // Tick function while player eating snake
 
+// FIXME change into sub-function
 l1e67	ldx v_snk_eat_seg
 l1e6a	tya             // start loop: search if player address equal any other snake segment
 l1e6b	sta l0384,x
@@ -1732,7 +1753,7 @@ l1e85	lda #$19        // write char for food: clearing player char
 	clc
 	adc #$84
 	sta $23
-	lda #$01        // color: white
+	lda #$07        // color: yellow
 	sta ($22),y
 
 l1e98	ldx v_snk_eat_seg  // reached snake head?
@@ -1787,7 +1808,7 @@ l1ea7	sty v_plr_face  // done; switch player face to closed/not eating
 	sty v_plr_dead  // reset "eating" status to normal "alive" status
 	jmp l1ac1       // eating done ==> back to regular player status update
 
-//-----------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Sub-function: Identify & eat snake whose tail was bitten by player
 // - Parameters: global $03-$04: player address
 // - Side-effects: Invalidates X
@@ -1820,20 +1841,26 @@ l1944	stx v_snk_eat_inst  // found snake: save index
         tya
         sta l03a6,x     // mark snake inactive
 	dec v_snk_cnt   // reduce number of active snakes
+
         txa
 	clc
-	adc #$25
-        cmp v_snk_last
-        bcc l1940
-	stx v_snk_last  // FIXME (harmless) check preceding if also inactive
+	adc #$01
+        cmp v_snk_last  // was this instance the last active in array?
+        bne l1940
+        sec             // yes -> record preceding one being last (note preceding could also be inactive: don't care, doesn't harm)
+        sbc #$25
+        bcs l1941
+        tya             // this was the only active -> set to 0
+l1941   sta v_snk_last
 l1940   sec             // return success indicator
         rts
 
 // ----------------------------------------------------------------------------
 // Sub-function: Activate a new snake
-// The call is ignored if the maximum number of snake is already active.
+// The call is ignored if the maximum number of snakes is already active.
+//
 // - Parameters: $08-$09: snake address on screen
-// - Side-effects: overwrites temporary $d7
+// - Side-effects: overwrites temporary $4b
 //                 invalidates X
 //                 invokes RAND function (invalidates $22-$23)
 // - Results: none
@@ -1856,7 +1883,7 @@ l137c	lda l03a6,x     // instance inactive?
 	clc
 	bcc l137c
 
-l1389	stx $d7         // backup struct start offset
+l1389	stx $4b         // backup struct start offset
 	txa
 	clc
 	adc #$22        // add offset to snake's tail address
@@ -1867,30 +1894,33 @@ l1391	lda $08         // start loop: init all snake segment addresses to start a
 	sta l0382+1,x
 	dex             // advance offset to next snake element in struct
 	dex
-	cpx $d7         // end loop across all snake elements, up to struct start
+	cpx $4b         // end loop across all snake elements, up to struct start
 	bne l1391
 
 	jsr $e094       // get RAND number
 	lda $8d
 	and #$c0        // derive direction $20,$60,$a0,$e0
         eor #$20
-        ldx $d7
+        ldx $4b
 	sta l03a6,x
         ldy #$00
 
-        // FIXME check if pos is blank: if yes stall tick until pos free
-	//lda ($08),y     // read char at new position of snake head
-	//cmp #$16        // any char of a snake? (can only be self)
-        //bcc l1d57       // yes -> closed mouth
+	lda ($08),y     // read char at new position of snake head
+	cmp #$16        // any char of a snake? (i.e. another snake currently overlapping spawn address?)
+        bcs l13a0
+        lda l03a6,x     // yes -> mark new snake as "pending"
+        eor #$0f
+        sta l03a6,x
+        bne l13b0
 
-	eor #$20        //  --- write char for snake head ---
+l13a0	lda l03a6,x
+        eor #$20        //  --- write char for snake head ---
 	lsr             // map direction -> 0,2,4,6: char for snake head, open
 	lsr
 	lsr
 	lsr
 	lsr
         sta ($08),y
-llx
 	lda $09         // calc color address
 	clc
 	adc #$84
@@ -1899,15 +1929,15 @@ llx
 	adc #$02        // snake head color code: red ... yellow
 	sta ($08),y
 
-	txa             // new max snake index?
+l13b0	txa             // calc offset to next snake instance
 	clc
-	adc #$0b
-	cmp v_snk_last
+	adc #$01
+	cmp v_snk_last  // new max?
 	bcc l13b4
 	sta v_snk_last
 l13b4	rts
 
-//-----------------------------------------------------------------
+// ----------------------------------------------------------------------------
 // Variables
 
 v_plr_skill     .byt 0      // player skill/level
@@ -1928,7 +1958,8 @@ v_snk_eat_inst	.byt 0      // while eating snake: index*$25 of snake instance
 v_snk_eat_seg   .byt 0      // while eating snake: index eaten snake segment (v_snk_eat_inst+{0..$22})
 
 v_snk_cnt       .byt 0      // counter active snakes
-v_snk_last      .byt 0      // offset behind last valid instance in snake array (e.g. 0 if cnt=0)
+v_snk_last      .byt 0      // offset of the last valid instance in snake array +1
+                            // (not +$25 to avoid overflow; not +0 to simplify use in loop condition)
 v_snakes        .dsb 6*$25, 0  // array of struct size $25 (size must be <=$ff)
 
 // The following are always used with X offsets, where X contains a multiple of
@@ -1938,4 +1969,4 @@ l0382 = v_snakes        // new head addr (during movement)
 l0384 = v_snakes + 2    // head addr
 l0386 = v_snakes + 4    // first middle segments addr
 l03a4 = v_snakes + $22  // tail addr
-l03a6 = v_snakes + $24  // direction $20,$60,$a0,$e0; $00:inactive
+l03a6 = v_snakes + $24  // direction $20,$60,$a0,$e0; $00:inactive; $xf: stalled
