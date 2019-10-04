@@ -86,7 +86,7 @@ _start_data = $1240
 // $0364,$0365: snake color under tail,head
 
 // $0384...$03dd: egg directory (for 4 bases, len=$16 each (see l1250)) bitmask:
-//                mask $1f: egg count
+//                mask $0f: egg count
 //                mask $10: stone
 //                mask $20: wood
 //                mask $40: power gain
@@ -160,6 +160,10 @@ l1400	lda #$0e
 	sta $9003
 	jsr $e55f       // clear screen
 	jsr $e09b       // seed pseudo-random number generator (with VIA timer)
+        lda #<key_int   // set dummy keyboard interrupt hook
+        sta $028f
+        lda #>key_int
+        sta $0290
 
 	ldx #$09        // copy pointers to bases on screen into ZP
 l1419	lda l1240,x
@@ -288,7 +292,7 @@ l14d9	jsr $e094       // get RAND number
 	ldx #$04        // loop to draw ladder across 4 rows
 l14f6	tya
 	sec
-	sbc #$16        // one row up: Yoff-=23
+	sbc #$16        // one row up: Xoff-=23
 	tay
 	lda #$0a        // draw "ladder" char
 	sta ($fd),y
@@ -453,7 +457,7 @@ l1625	lda l1258-1,x
 	dex
 	bne l1625
 
-	ldx #$0363-$0340+1  // initialize status variables
+	ldx #$0369-$0340+1  // initialize status variables
 	lda #$00        // preset all variables to zero
 l1638	sta $0340,x
 	dex
@@ -482,9 +486,8 @@ l164f   lda l1240+2,x   // base address
 	dex
 	bpl l164f
 
-        // TODO temporary
-        lda #$00        // Yoff:=0
-        ldx #$00        // snake index
+        lda #$00        // create initial snake on lowest level, Xoff=0
+        ldx #$00        // base level index
         jsr spawn_snake
 
 // ----------------------------------------------------------------------------
@@ -603,7 +606,7 @@ l175e   lda #$0f
 	beq l176f
         lda #$04        // 2 -> stage 2
         bne l1771
-l176f	lda #$00        // jump done
+l176f	lda #$00        // jump done (but only sideways part of jump; next: falling)
 l1771	sta $0347
 	jmp l1e0d
 
@@ -621,7 +624,8 @@ l178e	ldy #$16
         bcc l1790
         cmp #$15+1
         bcs l1790
-        jsr stomp_snake
+        tya
+        jsr stomp_snake_player
 l1790   ldy #$00        // --- free fall ---
 	jsr undraw_player
 	lda $00         // move player one row down
@@ -636,14 +640,16 @@ l17aa	sta $00
         jmp l1e0d
 
 l17c9   lda $0342
+        beq l17cb
         cmp #4*2+2      // fallen more than two levels?
         bcc l17ca
         lda #$03        // yes -> fallen to death
 	jmp post_game
 l17ca   lda #$00        // clear falling row counter
         sta $0342
+        jsr activate_snake_player
 
-        lda $0347
+l17cb   lda $0347
 	cmp #$10        // player moving left?
 	bne l1807
         //lda $cb
@@ -703,7 +709,7 @@ l184f	lda $cb
 	beq l1861
 	lda $911f       // joystick left?
 	and #$10
-	bne l187f
+	bne l18ba
 l1861	jsr undraw_player
 	lda $00         // player one to the right
 	bne l186c
@@ -715,45 +721,14 @@ l186c	dec $00
 	jsr draw_player
 	jmp l1e0d
 
-l187f	lda $cb
-	cmp #$09        // key 'W' (up)
-	beq l188c
-	lda $911f       // joystick up?
-	and #$04
-	bne l18ba
-l188c	lda $0346       // check char below player
-	cmp #$0a        // ladder?
-	beq l1897
-	cmp #$05        // base with ladder?
-	bne l18b3
-l1897	sta $0348       // --- climbing ---
-        jsr undraw_player
-	lda $00         // move player up one row
-	sec
-	sbc #$16
-	bcs l18a5
-	dec $01
-l18a5	sta $00
-	lda #$0d        // draw climbing player figure
-	jsr draw_player
-	jmp l1e0d
-l18b3	lda #$00
-	sta $0348       // clear climbing status
-	lda #$0c        // draw normal player figure
-        ldy #$00
-	sta ($00),y
-	jmp l1e0d
-
-l18ba	lda $0348       // on ladder?
-	bne l1903       // yes -> disallow horizontal movement
-	lda $cb
+l18ba	lda $cb
 	cmp #$29        // key 'S' (note: allow SHIFT being pressed already)
 	beq l18d6
 	lda #$7f
 	sta $9122
 	lda $9120       // joystick right?
 	and #$80
-	bne l1903
+	bne l187f
 l18d6	jsr undraw_player
 	inc $00
 	bne l18e1
@@ -773,6 +748,29 @@ l18f2	lda #$0f
 	sta $0347
 	jmp l1e0d
 
+l187f	lda $cb
+	cmp #$09        // key 'W' (up)
+	beq l188c
+	lda $911f       // joystick up?
+	and #$04
+	bne l1903
+l188c	lda $0346       // check char below player
+	cmp #$0a        // ladder?
+	beq l1897
+	cmp #$05        // base with ladder?
+	bne l193d       // neither -> stop climbing
+l1897	sta $0348       // --- climbing ---
+        jsr undraw_player
+	lda $00         // move player up one row
+	sec
+	sbc #$16
+	bcs l18a5
+	dec $01
+l18a5	sta $00
+	lda #$0d        // draw climbing player figure
+	jsr draw_player
+l18b3   jmp l1e0d
+
 l1903	lda $cb
 	cmp #$21        // key 'Z' (descend ladder)
 	beq l1910
@@ -786,7 +784,7 @@ l1910	ldy #$16        // read char one row below player
 	cmp #$0a        // ladder in row below player?
 	beq l191e
 	cmp #$05
-	bne l193d
+	bne l193d       // neither -> stop climbing
 l191e	sta $0348       // start descending
 	jsr undraw_player
 	lda $00         // move player one row down
@@ -797,13 +795,13 @@ l191e	sta $0348       // start descending
 l192f	sta $00
 	lda #$0d        // draw player; climbing form
 	jsr draw_player
-	jmp l1e0d
-l193d	ldy #$00
-	sty $0348       // reset climbing status
-	lda #$0c        // draw player in normal form
-	ldy #$00
-        sta ($00),y
-	jmp l1e0d
+        jmp l1e0d
+l193d   ldy #$00        // stop climbing when no ladder in moving direction
+	sty $0348       // clear ladder status
+	lda #$0c        // change player figure to "normal"
+	sta ($00),y
+        jsr activate_snake_player
+        jmp l1e0d
 
 l1944	lda $cb
 	cmp #$27        // key F1?
@@ -828,7 +826,7 @@ l1963	sta $00
 l196e	lda $cb
 	cmp #$3f        // key F7?
 	beq l197e
-	cmp #55         // key F5?
+	cmp #$20        // space key? (added for emulator)
 	beq l197e
 l1974	lda $911f       // joystick xxx?
 	and #$28
@@ -899,40 +897,49 @@ l19b1	jmp l1e0d
 l19b2	jmp l19d8
 
                         // --- F7 to pick up eggs? ---
-l1a61	ldy #$2c
-	lda ($00),y     // read char 2 rows below player
-	cmp #$08        // char for two eggs?
-	bne l1a6d
-	ldx #$07        // yes -> change to one egg
-	bne l1a7f
-l1a6d	cmp #$07        // char for one egg?
-	bne l1a75
-	ldx #$20        // yes -> change to empty
-	bne l1a7f
-l1a75	ldy #$16        // read char 1 row below player
+l1a61	ldy #$16        // read char 1 row below player
 	lda ($00),y
 	cmp #$01        // char for base with egg?
 	bne l1b2d       // no -> no eggs for picking up here
-	ldx #$00        // yes -> change to empty base
-l1a7f   lda $0341
+        lda $0341
         bmi l1a80       // carrying wood -> abort
-	cmp #$03        // already carrying 3 eggs?
-	bcc l1a90       // less than 3 -> ok
 	lda $034b       // power gain?
-	beq l1a80       // no -> abort
-	lda $0341       // power gain?
-	cmp #$14        // carrying 20 eggs?
-	bcc l1a90       // less than 20 (and power gain) -> ok
-l1a80   lda #<l1317     // no -> print "TOO HEAVY"
+	beq l1a65
+        lda #$14        // yes -> max 20 eggs
+        bne l1a66
+l1a65   lda #$03        // no -> max 3 eggs
+l1a66   sec
+        sbc $0341       // subtract number of already carried eggs
+        beq l1a80
+        bcs l1a90
+l1a80   lda #<l1317     // zero or negative -> print "TOO HEAVY"
         sta $10
 	lda #>l1317
         sta $11
         jsr prt_message
 	jmp l1e0d
-l1a90	txa
-        sta ($00),y     // draw char with one egg less
+l1a90   tax
+l1a91   ldy #$2c
+	lda ($00),y     // read char 2 rows below player
+	cmp #$08        // char for two eggs?
+	bne l1a6d
+	lda #$07        // yes -> change to one egg
+	bne l1a7f
+l1a6d	cmp #$07        // char for one egg?
+	bne l1a75
+	lda #$20        // yes -> change to empty
+	bne l1a7f
+l1a75	lda #$00        // yes -> change to empty base
+        ldy #$16
+l1a7f   sta ($00),y     // draw char with one egg less
 	inc $0341       // increment player's egg counter
-        jsr prt_egg_status
+        ldy #$16
+	lda ($00),y
+	cmp #$01        // char for base with egg?
+        bne l1a81       // no eggs left -> done
+        dex
+        bne l1a91       // iterate until max. no. of carried eggs reached
+l1a81   jsr prt_egg_status
 	jmp l1e0d
 
                         // --- F7 to pick up power-gain? ---
@@ -1051,7 +1058,7 @@ l1c00	.byt $ff,$88,$55,$22,$00,$00,$00,$00    // #$00: Base
 	.byt $ff,$88,$55,$22,$7f,$7f,$27,$60    // #$03: Base with wood
 	.byt $ff,$88,$55,$22,$41,$22,$14,$5d    // #$04: Base with power gain
 	.byt $ff,$88,$55,$22,$41,$7f,$41,$41    // #$05: Base with ladder
-	.byt $ff,$88,$55,$22,$3a,$77,$73,$3e    // #$06: Base with cracked egg
+	.byt $ff,$88,$55,$22,$3a,$77,$73,$3e    // #$06: Base with cracked egg (TODO)
 	.byt $3e,$7f,$7f,$3e,$00,$00,$00,$00    // #$07: one egg
 	.byt $3e,$7f,$7f,$3e,$3a,$7f,$7f,$3e    // #$08: two eggs
 	.byt $65,$51,$43,$49,$61,$55,$26,$1c    // #$09: stone lower half (under base)
@@ -1120,34 +1127,25 @@ l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$1e: fire v2
 //       should be async to allow concurrent player & snake movement
 
 l1d08	lda $00         // determine which base/level player is on
-	sta $0a
+	sta $0a         // address of stone while falling
 	lda $01
 	sta $0b
-                        // TODO move this to subfunction get_base_idx_and_yoff
-l1d10	ldx #$06
-l1d12	lda l1240+3,x
-	cmp $0b
-	bne l1d23
-	lda l1240+2,x
-	sec
-	sbc $0a
-	cmp #$18
-	bcc l1d27
-l1d23	dex
-	dex
-	bpl l1d12
-
-l1d27	sta $fa         //  pos in level equiv. pos. in egg directory
+l1d10   lda $00         // --- start loop for falling stone ---
+	sta $10         // temp copy of address for sub-function
+        lda $01
+	sta $11
+        jsr get_base_idx_and_xoff
+        bcs l1d11
+        jmp l1e0d       // abort if player is not directly above a base (should never happen)
+l1d11   tay
+	sty $fa         // backup Xoff in level equiv. pos. in egg directory
+        stx $fb         // backup base level index * 2
 	lda l1250,x
-	sta $fb
+	sta $10
 	lda l1250+1,x
-	sta $fc
-	lda #$16
-	sec
-	sbc $fa
-	tay
-	sty $fa
-	lda ($fb),y     // query egg directory for content previously hidden by stone
+	sta $11
+	lda ($10),y     // query egg directory for content previously hidden by stone
+        sta $fc         // backup result
         cmp #$40
         bcc l1d40
 	lda #$04        // char for base with power-gain
@@ -1180,8 +1178,7 @@ l1d67	dex
         dey
 	bne l1d65
 
-	ldy $fa
-	lda ($fb),y     // query egg directory again
+	lda $fc         // query egg directory again for drawing row below base
 	cmp #$40        // power gain?
         bcc l1d70
         lda #$0b        // char for lower half of power gain
@@ -1211,19 +1208,22 @@ l1d8c	ldy #$00        // start loop
         bcc l1d90
         cmp #$15+1
         bcs l1d90
-        jsr stomp_snake  // yes -> kill and undraw snake
-        ldy #$00
-        beq l1dac       // continue stone-fall in former pos of snake
+        lda $0a         // yes -> kill snake
+        sta $10
+        lda $0b
+        sta $11
+        jsr stomp_snake_addr
+        bcs l1d8c       // check char below snake again
+        bcc l1de0       // no snake matched (should never be reached)
 
 l1d90   cmp #$1e        // is fire hit by stone?
-	bne l1dd8       // none of the above -> stop stone fall
+	bne l1dd8       // no (and not blank) -> stop stone fall
 	ldy #$2c        // yes -> nearly extinguish fire
 	lda #$b2        // set fire counter to '2'
 	sta ($0a),y
 	lda #$ff        // manipulate timer to make fire counter decrement immediately (FIXME)
 	sta $034a
-        ldy #$00
-	beq l1dd8       // end stone fall
+	bne l1de0       // end stone fall
 
 l1dac	lda #$16        // draw upper half of stone
 	sta ($0a),y
@@ -1252,16 +1252,32 @@ l1dd3	sta $0a
 	clc
 	bcc l1d8c       // continue loop (falling stone)
 
-        // TODO randomly span snake on this level (if spot is blank)
-l1dd8	lda ($0a),y
-	cmp #$02        // stone hit base with stone?
-	bne l1dec
-l1dde	lda $0a         // yes -> new stone fall in lower level
+l1dd8   lda $0a         // undo last subtraction: pointer into row above base
 	sec
 	sbc #$16
-	bcs l1de7
+	bcs l1dd9
 	dec $0b
-l1de7	sta $0a
+l1dd9	sta $0a
+
+        lda $fc         // check egg directory of row above
+        and #$ff-$10    // anything below stone?
+        bne l1de0
+	//jsr $e094       // get RAND number: randomly spawn snake on this level
+	//lda $8d
+        //cmp #64         // probability 64/256 ~ 25%
+        //bcs l1de0
+        lda $0a
+        sta $10
+        lda $0b
+        sta $11
+        jsr get_base_idx_and_xoff
+        bcc l1de0
+        jsr spawn_snake
+
+l1de0   ldy #$16
+        lda ($0a),y
+	cmp #$02        // stone hit base with stone?
+	bne l1dec
 	jmp l1d10       // continue stone fall at current position
 l1dec	jmp l1e0d
 
@@ -1277,16 +1293,7 @@ l1e08	lda #$00        // no player action (i.e. no key/joystick input)
         lda #$0c        // change player figure from falling to normal
         sta ($00),y
 
-l1e0d	ldy #$40        // time delay
-l1e0f	ldx #$ff
-l1e11	dex
-	bne l1e11
-l1e14	dey
-	bne l1e0f
-
-	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
-	sta $9122
-
+l1e0d
 	lda $0348       // player on ladder?
 	beq l1e2f
 	lda $0346       // check char behind player
@@ -1295,8 +1302,8 @@ l1e14	dey
 	ldy #$00
 	sty $0348       // blank -> clear ladder status
 	lda #$0c        // change player figure to "normal"
-        ldy #$00
 	sta ($00),y
+        jsr activate_snake_player
 
 l1e2f   lda $0349       // immunity counter running?
 	beq l1e30
@@ -1313,14 +1320,26 @@ l1e30   lda $0346
 	bcc l1e50
         lda #$01
 	jmp post_game   // burnt to death
-l1e44   cmp #$13        // player moved into snake head?
-        beq l1e45
-        cmp #$15
-        bne l1e50
-l1e45   lda #$04
+l1e44   cmp #$11        // player moved into any part of a snake?
+        bcc l1e50
+        cmp #$15+1
+        bcs l1e50
+        lda #$04
 	jmp post_game   // death by snake bite
 
-l1e50   lda $0345       // message timer running?
+l1e50                   // --- end player status // next: timer actions ---
+
+        ldy #$40        // time delay
+l1e0f	ldx #$ff
+l1e11	dex
+	bne l1e11
+l1e14	dey
+	bne l1e0f
+
+	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
+	sta $9122
+
+        lda $0345       // message timer running?
         beq l1e59
         dec $0345       // decrement timer
         cmp #$01
@@ -1352,10 +1371,12 @@ l1e68   lda l1ca8_1-1,x
 	bne l1e68
 
 l1e67   inc $034a       // increment game loop counter
-	bne l1ef1       // no overflow -> skip periodic action handler
 
         lda $034d       // fire burning?
 	bne l1ef1
+        lda $034a
+        and #$7f
+        bne l1ef1
         ldx #$00        // --- maintain digits under fire ---
         stx $fb
 l1e70   lda $034e,x     // copy address of fire char to ZP
@@ -1505,7 +1526,7 @@ l1f9c	lda $034d       // attack ongoing?
 
 l1fa0	lda #18         // start iteration for foot lowering: MAX to row of lowest base
 	sta $fa
-        lda $0e         // backup Yoff of foot (left side)
+        lda $0e         // backup Xoff of foot (left side)
         sta $fb
 l1faa	ldy #$09
 l1fb0	lda l1346,y     // foot pattern (lower row, i.e. sole of foot)
@@ -1554,7 +1575,7 @@ l1fe0	lda ($0e),y
         bcs l1fe0
         bcc l201a       // not found -> continue stomping into next row
 l2001
-        lda $0f         // calc address of start of screen row containing foot sole (i.e. address of Yoff:0)
+        lda $0f         // calc address of start of screen row containing foot sole (i.e. address of Xoff:0)
         sta $11
         lda $0e
         sec
@@ -1681,18 +1702,21 @@ l2107   cmp #$01        // in coiled up state?
         dec $035f,x     // decrement timer
         bne l2108       // not zero -> no further action
         ldy $0353,x
-        // TODO check char under coiled snake: dead if player figure
-        // TODO (OR: player die even from coiled snake? if yes delete player check below)
         cpy #$16-1      // at right-most border?
         bcc l2104
-        lda $035e,x     // yes -> restore char under snake
+        ldy #$00        // yes -> check if fire is right of border
+        lda ($02),y
+        cmp #$1e
+        beq l2108       // yes -> keep waiting
+        ldy $0353,x
+        lda $035e,x     // restore char under snake
         sta ($02),y
         lda $0364,x
         sta ($10),y
-        lda #$00        // move to Yoff := 0
+        lda #$00        // move to Xoff := 0
         tay
-        sta $0353,x     // store new Yoff
-        lda ($02),y     // backup char under new Yoff
+        sta $0353,x     // store new Xoff
+        lda ($02),y     // backup char under new Xoff
 	cmp #$0c        // player figure next to coiled snake? (in any shape, i.e. #$0c...#$0f)
 	bcc l210a
 	cmp #$11
@@ -1718,10 +1742,12 @@ l2105   cmp #$02        // ---- moving v1: by one col ----
         cpy #$16-1      // snake tail reached right-most column?
         bcs l2110       // -> coil up
         tya
-        sta $0353,x     // store new Yoff
+        sta $0353,x     // store new Xoff
 l2104
         lda #$12        // char for snake tail (v1)
         sta ($02),y     // draw snake tail at new pos (former head pos)
+        lda #$04        // update color too (needed only in case of uncoiling)
+        sta ($10),y
         iny
         lda ($02),y     // read background char at snake head
 	cmp #$0c        // reaching player figure? (in any shape, i.e. #$0c...#$0f)
@@ -1742,7 +1768,7 @@ l2109   cmp #$1e        // reached burning fire?
         bne l2102
 
 l2112   lda #$04        // player bitten by snake
-        // TODO draw coiled snake next to player
+        // TODO draw coiled snake next to player (to make cause visible)
         jmp post_game
 
 l2111   dey
@@ -1752,9 +1778,13 @@ l2110                   // ---- coiling up again ----
         lda #$01        // set state to coiled-up
         sta $0352,x
         tya
-        sta $0353,x     // store Yoff
-        lda #$40        // timer until uncoiling (constant)
-        sta $035f,x
+        sta $0353,x     // store Xoff
+        jsr is_player_same_level  // player currently on same base?
+        bcc l2161
+        lda #$04        // yes -> minimal time until uncoiling
+        bne l2162
+l2161   lda #$40        // no -> longer time
+l2162   sta $035f,x
         clc
         bcc l2102
 
@@ -1777,9 +1807,17 @@ l2102   dex
 
 l2103	jmp l1700
 
-//                      // Parameter: A:=Yoff (col index in row above base)
+//                      // Parameter: A:=Xoff (col index in row above base)
 //                      //            X:=snake index
 spawn_snake
+        cpx #$2*2+1     // check range of X
+        bcs l2621
+        cmp #$16        // check range of Xoff
+        bcs l2621
+        tay
+        lda $0352,x     // check status of snake: must be inactive
+        bne l2621
+        tya
         sta $0353,x
         lda #$01        // set snake state to coiled-up
         sta $0352,x
@@ -1787,7 +1825,6 @@ spawn_snake
         sta $02
         lda $0359,x
         sta $03
-        ldy $0353,x
         lda ($02),y     // backup char under snake
         sta $035e,x
         lda #$11        // char for coiled-up snake
@@ -1809,11 +1846,25 @@ spawn_snake
         and #$3f
         adc #$10
         sta $035f,x
+l2621   rts
+
+stomp_snake_player
+        clc
+        adc $00         // Parameter: Accu contains X-offset
+        sta $10
+        lda $01
+        adc #$00
+        sta $11
+        jsr get_base_idx_and_xoff
+        bcs stomp_snake_x
         rts
 
-stomp_snake
-        // TODO determine index; note source can be player $00 or stonefall $0a
-        ldx #$00
+stomp_snake_addr
+        jsr get_base_idx_and_xoff
+        bcs stomp_snake_x
+        rts
+
+stomp_snake_x
         lda $0352,x
         beq l2601
 
@@ -1847,8 +1898,43 @@ l2602   lda #$00        // set state to inactive
 	lda #>l1318
         sta $11
         jmp prt_message
-        // rts in sub-routine
-l2601   rts
+        sec
+        rts
+l2601   clc
+        rts
+
+activate_snake_player
+        lda $00
+        sta $10
+        lda $01
+        sta $11
+        jsr get_base_idx_and_xoff
+        bcc l2630
+        lda $0352,x
+        cmp #$01        // snake on this level in coiled state?
+        bne l2601
+        sta $035f,x     // make timer expire in next tick
+l2630   rts
+
+//                      // Parameters: X := level to compare (not invalidated by function)
+//                                     $00-$01: player address
+//                      // Results: status.C := 1=OK, 0=nOK
+is_player_same_level
+        cpx #$2*2+1     // check range of X
+        bcs l2640
+        lda l1240+2,x   // subtract player address from base address
+        sec
+	sbc $00
+        tay
+	lda l1240+3,x
+	sbc $01
+	bne l2640       // MSB delta (incl. carry) not zero -> player not on this base
+	cpy #$16+1      // LSB delta: player within row above the base?
+	bcs l2640
+        sec             // result: yes
+        rts
+l2640   clc
+        rts
 
 // ----------------------------------------------------------------------------
 //                      // Sub-function for updating "carrying" status
@@ -1939,6 +2025,35 @@ undraw_player
         sta $11
         lda $0340
 	sta ($10),y
+        rts
+
+// ----------------------------------------------------------------------------
+//                      // Sub-function: calc base level idx and Xoff
+//                      // Parameter: $10-$11: address - must be in row ABOVE a base
+//                      // Results: A := X-offset
+//                      //          X := base index * 2
+//                      //          status.C := 1=OK, 0=nOK
+
+get_base_idx_and_xoff
+        ldx #$06        // iterate across all bases
+l2312	lda l1240+2,x   // subtract player address from base address
+        sec
+	sbc $10
+        tay
+	lda l1240+3,x
+	sbc $11
+	bne l2323       // MSB delta (incl. carry) not zero -> player not on this base
+	cpy #$16+1      // LSB delta: player within row above the base?
+	bcc l2327       // yes -> done
+l2323	dex
+	dex
+	bpl l2312
+        clc             // no match
+        rts
+l2327	tya
+        eor #$ff
+        sec
+        adc #$16        // calc 16-A via 2-complement(A) + 16
         rts
 
 // ----------------------------------------------------------------------------
@@ -2141,5 +2256,11 @@ l2415   lda $cb         // wait for key release
         bne l2415
         jmp $e518
 l2411   jmp l1400       // restart from scratch
+
+
+// ----------------------------------------------------------------------------
+//                      // Replace hook for keyboard interrupts with dummy
+key_int
+        rts
 
 // ----------------------------------------------------------------------------
