@@ -24,6 +24,7 @@
 // ----------------------------------------------------------------------------
 
 // Enhancement options:
+// - F1 pick up eggs from ceiling
 // - add snake eggs below bases, birthing snakes at random times
 // - add spiders crawling above top level, randomly lowering themselves to a level
 // - improve dino foot stomping by lifting one row and back
@@ -270,7 +271,7 @@ l13cf	lda $04,x       // get n-th base address from address list
 	lda $05,x
 	sta $fe
 	stx $00         // backup iteration counter
-l14d9	lda #$16-2      // get random X-offset within the level (1..21)
+l14d9	lda #$16-2      // get random X-offset within the level (1..20)
         jsr get_rand_lim
 	clc
 	adc #$01
@@ -316,10 +317,10 @@ l1527	lda ($fa),y     // read screen: is this an empty base? (i.e. no ladder)
 	lda #$80        // not empty -> block this position for eggs
 l152d	sta ($fc),y     // initialize egg counter: 0 or BLOCKED
 	dey
-	bpl l1527
+	bpl l1527       // next column
 	dex
 	dex
-	bpl l1513
+	bpl l1513       // next level
 
 l15f3	lda #$58        // --- place power gain at random position ---
         jsr get_rand_lim
@@ -347,10 +348,24 @@ l153a	lda #$58
         jsr get_rand_lim
 	tax
 	lda $0384,x     // start of egg directory
-	cmp #$03
-	bcs l153a       // already full or blocked -> try again
-	inc $0384,x     // put an egg here
-	dec $00
+	bne l153a       // already used or blocked -> try again
+        stx $01
+        jsr get_rand
+        and #$03
+        clc
+        adc #$01
+        cmp #$03+1      // 3 eggs have P=50%, 1 and 2 P=25% each
+        bcc l153c
+        lda #$03
+l153c   cmp $00
+        bcc l153d
+        lda $00
+l153d   ldx $01
+        sta $0384,x     // put up to 3 eggs here
+        eor #$ff
+        sec
+        adc $00
+        sta $00
 	bne l153a
 
 	lda #$20        // --- distribute 32 stones randomly (possibly on top of items) ---
@@ -931,10 +946,10 @@ l197e	ldy #$17        // check if player at home:
 	bcc l19ae       // no -> abort
 	cmp #$11
 	bcs l19ae
-                        // FIXME must allow 1 or 2 if no more eggs left
-        lda $0341       // carrying at least 3 eggs?
+                        // FIXME must allow less eggs left overall
+        lda $0341       // carrying at least 6 eggs?
         and #$7f
-        cmp #$03
+        cmp #$06
         bcc l19ae       // no -> abort
 	lda $034d
 	cmp #$08        // player attacked by dino mum?
@@ -984,9 +999,9 @@ l1a61	ldy #$16        // read char 1 row below player
         bmi l1a80       // carrying wood -> abort
 	lda $034b       // power gain?
 	beq l1a65
-        lda #$16        // yes -> max 21 eggs
+        lda #24         // yes -> max higher
         bne l1a66
-l1a65   lda #$03        // no -> max 3 eggs
+l1a65   lda #$06        // no -> max lower
 l1a66   sec
         sbc $0341       // subtract number of already carried eggs
         beq l1a80
@@ -2464,6 +2479,12 @@ init_rand_gen
 //       for A times. (The idea behind the formula is using 16-bit fix-point
 //       arithmetic. Then RAND16 is a value in range [0..1[ which we scale
 //       to [0..A[ via multiplication.)
+//
+//       Another alternative could be calculating RAND16 / ((1<<16) / A),
+//       where the constant would be calculated at compile-time and division
+//       implemented via iteration. However imprecision of the pre-calculated
+//       constant still leads to slightly uneven distribution. To improve,
+//       one could use instead (RAND16<<8) / ((1<<24) / A)
 //
 get_rand_lim
         sta $03ef       // backup limit value
