@@ -30,6 +30,8 @@ _start_data = $1240
 // ----------------------------------------------------------------------------
 // Description of memory layout:
 //
+// >>>>> Prerequisite: 8 kB memory extension at $2000 <<<<<
+//
 // $0000-$00ff: pointer variables; see description below
 //
 // $0340-$03ff: data, see below (in BASIC this area is tape buffer)
@@ -44,7 +46,7 @@ _start_data = $1240
 // Main control flow:
 //
 // - $1400: game entry point from BASIC (SYS 5120)
-// - main loop: chain of "jmp" starting at tick_player -> tick_snakes -> ...
+// - main loop: chain of "jmp" starting at tick_player -> tick_stone_fall -> ...
 //   and finally back to tick_player
 // - game is ended via "rts"
 
@@ -90,8 +92,9 @@ _start_data = $1240
 // $0364,$0365: snake color under tail,head
 
 // $0384...$03dd: egg directory (for 4 bases, len=$16 each (see l1250)) bitmask:
-//                mask $03: egg count
-//                mask $10: stone
+//                mask $03: egg count (1..3)
+//                mask $08: snake egg
+//                mask $10: stone (may be combined with any other but $80)
 //                mask $20: wood
 //                mask $40: power gain
 //                mask $80: ladder <-> blocked for content
@@ -119,14 +122,14 @@ _start_data = $1240
 //  18     $1176
 
 // Enhancement options:
+// - add sound effects
 // - allow picking up eggs from ceiling via F1
-// - add snake eggs below bases, birthing snakes at random times
+// - add snake eggs below bases, hatching snakes at random times
 // - add spiders crawling above top level, randomly lowering themselves to a level
 // - improve dino foot stomping by lifting one row and back
 //   OR make async and give player chance to escape
 //   OR replace by dino stampede through the level (3x3 chars each)
 // - add eggs piled above bases
-// - add sound effects
 // - increase difficulty level after won game (e.g. more/faster snake)
 
 .text
@@ -136,17 +139,17 @@ _start_data = $1240
 //      Read-only data
 
         // screen addresses of bases/levels
-l1240   .word $102c             // top
-        .word $1176             // bottom-most
-        .word $111e             // 2nd from bottom
-        .word $10c6             // 3rd from bottom
-        .word $106e             // 2nd from top
-        // numbers of gaps in middle levels (top and bottom have no gaps)
+l1240   .word $1000 + 2*22      // top
+        .word $1000 +17*22      // bottom-most
+        .word $1000 +13*22      // 2nd from bottom
+        .word $1000 + 9*22      // 3rd from bottom
+        .word $1000 + 5*22      // 2nd from top
+        // numbers of gaps in middle levels (top and bottom have no gaps); one more may be added randomly
         // (dummy zero in-between to allow indexing with 2*X)
-l124a   .byt $01,$00
-        .byt $02,$00
-        .byt $03,$00
-        // egg directory = bases (see above)
+l124a   .byt 2,0
+        .byt 3,0
+        .byt 4,0
+        // address of egg directory per base/level, excluding "top" (see above)
 l1250   .word $0384+$16+$16+$16
         .word $0384+$16+$16
         .word $0384+$16
@@ -208,17 +211,17 @@ l1425	sta ($00),y
 	dey
 	bpl l1425
 
-                        // FIXME allows gap "____....__....____" (i.e. unreachable base section!)
 	ldx #$04        // ---- place gaps in bases ---
 l1334	lda $04,x       // get n-th base address from address list
-	sta $fd         // (starting with 2nd lowest, as lowest must not have gaps)
+	sta $10         // (starting with 2nd lowest, as lowest must not have gaps)
 	lda $05,x
-	sta $fe
+	sta $11
 	lda #$00
-	stx $fa         // backup loop counter (X)
+	sta $fa
+	stx $fd         // backup loop counter (X)
         jsr get_rand
 	and #$01        // get one RAND bit
-        ldx $fa
+        ldx $fd
 	clc
 	adc l124a,x     // number of gaps in this level from table + random 0 or 1
 	sta $fb
@@ -230,20 +233,20 @@ l144c	lda #$09        // -- start of loop across number of gaps --
 	tay
 	lda #$00
 	sta $fc
-	lda ($fd),y     // empty base and no gap yet at this X-off?
+	lda ($10),y     // empty base and no gap yet at this X-off?
 	bne l144c       // no -> try again
 	dey
 	dey
 	dey
         bmi l1470
-	lda ($fd),y
+	lda ($10),y
 	beq l1470
 	lda #$80        // mark there's already a gap 2 to left
 	ora $fc
 	sta $fc
 l1470	iny
 	iny
-	lda ($fd),y
+	lda ($10),y
 	beq l147c
 	lda #$20        // mark there's already a gap 1 to left
 	ora $fc
@@ -251,7 +254,7 @@ l1470	iny
 l147c	iny
 	iny
 	iny
-	lda ($fd),y
+	lda ($10),y
 	beq l1489
 	lda #$08        // mark there's already a gap 1 to right
 	ora $fc
@@ -260,7 +263,7 @@ l1489	iny
 	iny
         cpy #$16
         bcs l1495
-	lda ($fd),y
+	lda ($10),y
 	beq l1495
 	lda #$02        // mark there's already a gap 2 to right
 	ora $fc
@@ -276,18 +279,21 @@ l1495	dey
 	lda $fc
 	and #$a0
 	cmp #$a0
-	beq l14b7       // double-wide gap on left side -> OK
+	beq l14b7       // double-wide gap on left side -> OK (i.e. allow enlarging that gap)
 	lda $fc
 	and #$0a
-	cmp #$0a        // double-wide gap on right side -> OK
-	beq l14b7
+	cmp #$0a
+	beq l14b7       // double-wide gap on right side -> OK (i.e. allow enlarging that gap)
+        lda $fa
+	bne l144c       // allow ignoring above rules once (i.e. allow one double-wide gap)
+        sty $fa
 l14b7	lda #$20        // finally create the gap
-	sta ($fd),y
+	sta ($10),y
 	iny
-	sta ($fd),y
+	sta ($10),y
 	dec $fb         // loop for next gap on this level
-	bpl l144c
-	ldx $fa         // loop for next level
+	bne l144c
+	ldx $fd         // loop for next level
 	dex
 	dex
 	bmi l14cd
@@ -370,6 +376,20 @@ l1558	lda #$58
 	dec $00
 	bne l1558
 
+	lda #$04        // --- distribute 4 snake eggs randomly ---
+	sta $00
+l155a	lda #$58-$16    // exclude highest base
+        jsr get_rand_lim
+        clc
+        adc #$16
+	tax
+	lda $0384,x
+	bne l155a       // try again if position blocked or used already
+	lda #$08
+	sta $0384,x     // store code for snake egg in egg directory
+	dec $00
+	bne l155a
+
 	lda #$36         // --- distribute 54 eggs randomly across levels ---
 	sta $00
 l153a	lda #$58
@@ -429,7 +449,7 @@ l15b4	lda ($fc),y
         bne l15b8
         lda #$0b        // char for "lower half of power gain"
         bne l15bb
-l15b8   and #$0f
+l15b8   and #$03
         cmp #$02        // two or more eggs?
         bcc l15cb
 	clc
@@ -462,8 +482,12 @@ l15de   lda ($fc),y
 	lda #$04        // base with power-gain
 	bne l15ea
 l15e0   cmp #$20        // wood?
-	bcc l15e8
+	bcc l15e4
 	lda #$03        // base with wood
+	bne l15ea
+l15e4   cmp #$08        // snake egg?
+	bcc l15e8
+	lda #$06        // base with snake egg
 	bne l15ea
 l15e8	lda #$01        // base with egg
 l15ea	sta ($fa),y     // draw selected char
@@ -1099,9 +1123,14 @@ l1b2d	ldy #$16        // read char one row below player
 l1b52	jmp player_status_check
 
 l1b55	cmp #$02        // base with stone?
-	bne l1a23
+	bne l1b58
         jsr start_stone_fall
 	jmp player_status_check
+
+l1b58	cmp #$06        // base with snake egg?
+	bne l1a23
+        lda #$04
+	jmp post_game   // death by snake bite
 
                         // --- F7 to drop carried egg or wood? ---
 l1a23	cmp #$00        // empty base under player?
@@ -1187,7 +1216,7 @@ l1a20	jmp player_status_check
 // - 32 user-defined characters, 8x8 bit each
 // - must start at $1c00, where the data is read by VIA HW (register $9005)
 // - note address is selected so that char codes $80-$ff are mapped to
-//   upper-case character definitions in ROM (i.e. address cannot be changed!)
+//   reverse character definitions in ROM (i.e. address cannot be changed!)
 
 // fill up possible gap before fixed start address of this section
 // ATTENTION: assembler "xa" will not generate error if the gap has negative size
@@ -1200,7 +1229,7 @@ l1c00	.byt $ff,$88,$55,$22,$00,$00,$00,$00    // #$00: Base
 	.byt $ff,$88,$55,$22,$7f,$7f,$27,$60    // #$03: Base with wood
 	.byt $ff,$88,$55,$22,$41,$22,$14,$5d    // #$04: Base with power gain
 	.byt $ff,$88,$55,$22,$41,$7f,$41,$41    // #$05: Base with ladder
-	.byt $ff,$88,$55,$22,$3a,$77,$73,$3e    // #$06: Base with cracked egg (TODO)
+	.byt $ff,$88,$55,$22,$3c,$6a,$56,$3c    // #$06: Base with snake egg
 	.byt $3e,$7f,$7f,$3e,$00,$00,$00,$00    // #$07: one egg
 	.byt $3e,$7f,$7f,$3e,$3a,$7f,$7f,$3e    // #$08: two eggs
 	.byt $65,$51,$43,$49,$61,$55,$26,$1c    // #$09: stone lower half (under base)
@@ -1251,15 +1280,15 @@ l1cf0	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1e: fire - written/toggled at
 l1ca8_0 .byt $08,$28,$69,$b9,$7f,$3c,$18,$7e    // #$1e: fire v1
 l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$1e: fire v2
 
-// snake: tail+head (v1) (v2)                   coiled
-// ........|........    ........|........       .....xxx
-// ........|........    ........|........       .....xxx
-// ........|........    ........|........       .....x..
-// ........|.xxx....    ........|.....xxx       .xxxx...
-// ........|.xxx....    ......x.|.....xxx       x.......
-// ..xx....|x.......    .....x.x|....x...       .xxxxxx.
-// .x..x..x|........    ....x...|x..x....       .......x
-// x....xx.|........    ....x...|.xx.....       xxxxxxx.
+// snake: tail+head (v1) (v2)                   coiled          base+snake egg
+// ........|........    ........|........       .....xxx        xxxxxxxx
+// ........|........    ........|........       .....xxx        x...x...
+// ........|........    ........|........       .....x..        .x.x.x.x
+// ........|.xxx....    ........|.....xxx       .xxxx...        ..x...x.
+// ........|.xxx....    ......x.|.....xxx       x.......        ..xxxx..
+// ..xx....|x.......    .....x.x|....x...       .xxxxxx.        .xx.x.x.
+// .x..x..x|........    ....x...|x..x....       .......x        .x.x.xx.
+// x....xx.|........    ....x...|.xx.....       xxxxxxx.        ..xxxx..
 
 // Dino foot (claw)
 // ..x....x|..x.....|x....x..
@@ -1440,7 +1469,7 @@ l1e71   inx             // loop across 2 fires
 	beq l1eb0
         cmp #$b0        // '0'?
 	beq l1eb4
-	jmp tick_snakes
+	jmp tick_stone_fall
 
 l1eb0	lda #<l130d     // print "FIRE IS GOING OUT"
         sta $10
@@ -1449,7 +1478,7 @@ l1eb0	lda #<l130d     // print "FIRE IS GOING OUT"
         jsr prt_message
         lda #$20
 	sta $0349
-	jmp tick_snakes
+	jmp tick_stone_fall
 
 l1eb4	lda #$01        // new fire status: "make a fire"
 	sta $034d
@@ -1463,7 +1492,7 @@ l1eb4	lda #$01        // new fire status: "make a fire"
         jsr prt_message
         lda #$20
 	sta $0349
-	jmp tick_snakes
+	jmp tick_stone_fall
 
 l1ef1	lda $034d
 	and #$f8
@@ -1471,7 +1500,7 @@ l1ef1	lda $034d
 	jmp l1f9c       // to "dino mum actions"
 l1efb	lda $034c       // timer running?
 	bne l1f03
-l1f00	jmp tick_snakes       // to "snakes"
+l1f00	jmp tick_stone_fall
 l1f03	dec $034c       // counter up to status message
 	bne l1f00
 l1f08	lda $034d
@@ -1489,7 +1518,7 @@ l1f0d	cmp #$01        // fire status 1? (fire freshly out)
 	sta $034c
 l1f26	lda #$20
 	sta $0349
-	jmp tick_snakes
+	jmp tick_stone_fall
 
 l1f2e	cmp #$02        // fire status 2?
 	bne l1f49
@@ -1673,7 +1702,236 @@ l206e	sta $1000,x
 	lda #$01
 	sta $0349
 	jsr clr_message
-	jmp tick_snakes
+	jmp tick_stone_fall
+
+// ----------------------------------------------------------------------------
+//                      // Stone fall tick function
+
+tick_stone_fall
+        ldx #$00        // loop across all instances of falling stones
+l1d09   lda $03e0,x
+        bne l1d01
+        jmp l1dee       // inactive -> skip this instance
+
+l1d01   stx $fa         // backup X = loop index
+        lda $03e4,x     // copy screen address to pointer in ZP
+	sta $0a
+        lda $03e5,x
+	sta $0b
+
+        lda $03e0,x     // get instance state
+        cmp #$01
+        bne l1d02
+        lda $0a         // --- start loop for falling stone ---
+	sta $10         // temp copy of address for sub-function
+        lda $0b
+	sta $11
+        jsr get_base_idx_and_xoff
+        bcs l1d11
+        ldx $fa
+        lda #$00
+        sta $03e0,x
+        jmp l1dee       // abort if player is not directly above a base (should never happen)
+l1d11   tay
+	lda l1250,x
+	sta $10
+	lda l1250+1,x
+	sta $11
+	lda ($10),y     // query egg directory for content previously hidden by stone
+        ldx $fa
+        sta $03e1,x     // store result
+        cmp #$40
+        bcc l1d40
+	lda #$04        // char for base with power-gain
+	bne l1d4d
+l1d40	and #$2f
+	cmp #$10
+	bcc l1d46
+	lda #$03        // char for base with wood
+	bne l1d4d
+l1d46	cmp #$08
+	bcc l1d47
+	lda #$06        // char for base with snake egg
+	bne l1d4d
+l1d47	cmp #$01
+	bcc l1d4d
+	lda #$01        // char for base with egg
+l1d4d	ldy #$16
+	sta ($0a),y     // draw new base char
+        lda $0a         // calc color address: ($00) + $9400 -$1000
+        sta $10
+        lda $0b
+        clc
+        adc #$94-$10
+        sta $11
+	ldy #$2c        // offset to row below base
+	lda #$16        // char for upper half of stone without base
+	sta ($0a),y
+        lda #$01        // color: white
+	sta ($10),y
+	ldy #$42        // offset two rows below base
+	lda ($0a),y
+	cmp #$20        // room for lower half of stone?
+	bne l1d63
+	lda #$09        // draw lower half of stone
+	sta ($0a),y
+        lda #$01        // color: white
+	sta ($10),y
+
+l1d63   lda #$02        // continue stone-fall in next iteration
+        sta $03e0,x
+        jmp l1dec
+
+l1d02   cmp #$02        // --- second stage: stone two rows below base ---
+        bne l1dd0
+
+	lda $03e1,x     // query egg directory again for drawing row below base
+	cmp #$40        // power gain?
+        bcc l1d70
+        lda #$0b        // char for lower half of power gain
+        bne l1d7d
+l1d70	and #$03
+	cmp #$02        // more than one egg?
+	bcc l1d7b
+	adc #$07-2-1    // char for one or two eggs (-2 for egg# >=2; -1 due to omitting CLC)
+	bne l1d7d
+l1d7b	lda #$20        // blank char
+l1d7d	ldy #$2c        // stone address + 2 rows
+	sta ($0a),y
+
+	lda $0a         // address of upper-half of stone
+	clc
+	adc #$42
+	bcc l1d8a
+	inc $0b
+l1d8a	sta $0a
+        lda #$03        // fall-through to third stage
+        sta $03e0,x
+        bne l1d8c
+
+l1dd0	ldy #$00        // --- third stage: stone 3 or more rows below ---
+        lda #$20
+	sta ($0a),y     // remove upper half of stone
+	lda $0a         // move stone pointer one row down
+	clc
+	adc #$16
+	bcc l1dd3
+	inc $0b
+l1dd3	sta $0a
+
+l1d8c	ldy #$00
+	lda ($0a),y     // read char below new base
+	cmp #$09        // is lower half of stone? (written by previous iteration)
+	beq l1dac       // yes -> continue stone-fall
+	cmp #$20        // blank? -> continue
+	beq l1dac
+        cmp #$11        // is any part of a snake?
+        bcc l1d90
+        cmp #$15+1
+        bcs l1d90
+        lda $0a         // yes -> kill snake
+        sta $10
+        lda $0b
+        sta $11
+        jsr stomp_snake_addr
+        ldx $fa
+        bcs l1d8c       // snake found -> check char below stone again
+        bcc l1de0       // no snake matched (should never be reached)
+
+l1d90   cmp #$1e        // is fire hit by stone?
+	bne l1dd8       // no (and not blank) -> stop stone fall
+	ldy #$2c        // yes -> nearly extinguish fire
+	lda #$b2        // set fire counter to '2'
+	sta ($0a),y
+	lda #$ff        // manipulate timer to make fire counter decrement immediately
+	sta $034a
+	bne l1de0       // end stone fall
+
+l1dac	lda #$16        // draw upper half of stone
+	sta ($0a),y
+	ldy #$16
+	lda ($0a),y
+	cmp #$20        // still blank one row below?
+	bne l1dbc
+	lda #$09        // yes -> draw lower half of stone
+	sta ($0a),y
+        lda $0a         // calc color address: ($00) + $9400 -$1000
+        sta $10
+        lda $0b
+        clc
+        adc #$94-$10
+        sta $11
+        lda #$01        // color: white
+	sta ($10),y
+l1dbc	jmp l1dec       // continue stone fall in next iteration
+
+l1dd8   lda $0a         // undo last subtraction: pointer into row above base
+	sec
+	sbc #$16
+	bcs l1dd9
+	dec $0b
+l1dd9	sta $0a
+
+        lda $03e1,x     // check egg directory of base/level above
+        and #$ff-$10    // anything below stone?
+        bne l1de0
+	jsr get_rand    // get RAND number: randomly spawn snake on this level
+        cmp #$66        // probability ~40%
+        bcs l1de0
+        lda $0a
+        sta $10
+        lda $0b
+        sta $11
+        jsr get_base_idx_and_xoff
+        bcc l1de0
+        jsr spawn_snake
+
+l1de0   ldx $fa
+        ldy #$16
+        lda ($0a),y
+	cmp #$02        // stone hit base with stone?
+	bne l1de1
+        lda #$01        // yes -> new stone fall at current position
+        bne l1de2
+l1de1   lda #$00        // no -> end stone fall
+l1de2   sta $03e0,x
+
+l1dec	lda $0a
+        sta $03e4,x
+        lda $0b
+        sta $03e5,x
+l1dee	inx
+        inx
+        cpx #$02+1      // next falling stone
+        bcs l1def
+        jmp l1d09
+
+l1def   jmp tick_snakes
+
+// ----------------------------------------------------------------------------
+// Sub-function for starting a stone-fall, usually triggered by user.
+// The function silently ignores if the max. number of falling stones is
+// already reached (i.e. the stone will remain unchanged in that case).
+//
+// Parameters: global $00-$01: player position (read-only)
+// Side-effects: invalidates X
+
+start_stone_fall
+        ldx #$00
+l1df0   lda $03e0,x     // stone instance already active?
+        bne l1df1       // yes -> try next
+        lda $00         // store screen start address, equal player address
+	sta $03e4,x
+	lda $01
+	sta $03e5,x
+        lda #$01        // set initial state
+        sta $03e0,x
+        rts
+l1df1   inx
+        inx
+        cpx #$02+1      // max. no of instances reached?
+        bcc l1df0
+        rts
 
 // ----------------------------------------------------------------------------
 //                      // Snake main tick, animating all snake instances
@@ -1807,7 +2065,7 @@ l2102   dex
         bmi l2103
         jmp l2101
 
-l2103	jmp tick_stone_fall
+l2103	jmp tick_player // jump back to first of main "tick" loop
 
 // ----------------------------------------------------------------------------
 // Sub-function for activating a snake in a given level at a given X-offset
@@ -1979,214 +2237,6 @@ is_player_same_level
         sec             // result: yes
         rts
 l2640   clc             // result: no
-        rts
-
-// ----------------------------------------------------------------------------
-//                      // Stone fall tick function
-
-tick_stone_fall
-        ldx #$00        // loop across all instances of falling stones
-l1d09   lda $03e0,x
-        bne l1d01
-        jmp l1dee       // inactive -> skip this instance
-
-l1d01   stx $fa         // backup X = loop index
-        lda $03e4,x     // copy screen address to pointer in ZP
-	sta $0a
-        lda $03e5,x
-	sta $0b
-
-        lda $03e0,x     // get instance state
-        cmp #$01
-        bne l1d02
-        lda $0a         // --- start loop for falling stone ---
-	sta $10         // temp copy of address for sub-function
-        lda $0b
-	sta $11
-        jsr get_base_idx_and_xoff
-        bcs l1d11
-        ldx $fa
-        lda #$00
-        sta $03e0,x
-        jmp l1dee       // abort if player is not directly above a base (should never happen)
-l1d11   tay
-	lda l1250,x
-	sta $10
-	lda l1250+1,x
-	sta $11
-	lda ($10),y     // query egg directory for content previously hidden by stone
-        ldx $fa
-        sta $03e1,x     // store result
-        cmp #$40
-        bcc l1d40
-	lda #$04        // char for base with power-gain
-	bne l1d4d
-l1d40	and #$23
-	cmp #$10
-	bcc l1d47
-	lda #$03        // char for base with wood
-	bne l1d4d
-l1d47	cmp #$01
-	bcc l1d4d
-	lda #$01        // char for base with egg
-l1d4d	ldy #$16
-	sta ($0a),y     // draw new base char (FIXME to be safe also set color)
-	ldy #$2c        // offset to row below base
-	lda #$16        // char for upper half of stone without base
-	sta ($0a),y
-	ldy #$42        // offset two rows below base
-	lda ($0a),y
-	cmp #$20        // room for lower half of stone?
-	bne l1d63
-	lda #$09        // draw lower half of stone
-	sta ($0a),y
-
-l1d63   lda #$02        // continue stone-fall in next iteration
-        sta $03e0,x
-        jmp l1dec
-
-l1d02   cmp #$02        // --- second stage: stone two rows below base ---
-        bne l1dd0
-
-	lda $03e1,x     // query egg directory again for drawing row below base
-	cmp #$40        // power gain?
-        bcc l1d70
-        lda #$0b        // char for lower half of power gain
-        bne l1d7d
-l1d70	and #$03
-	cmp #$02        // more than one egg?
-	bcc l1d7b
-	adc #$07-2-1    // char for one or two eggs (-2 for egg# >=2; -1 due to omitting CLC)
-	bne l1d7d
-l1d7b	lda #$20        // blank char
-l1d7d	ldy #$2c        // stone address + 2 rows
-	sta ($0a),y
-
-	lda $0a         // address of upper-half of stone
-	clc
-	adc #$42
-	bcc l1d8a
-	inc $0b
-l1d8a	sta $0a
-        lda #$03        // fall-through to third stage
-        sta $03e0,x
-        bne l1d8c
-
-l1dd0	ldy #$00        // --- third stage: stone 3 or more rows below ---
-        lda #$20
-	sta ($0a),y     // remove upper half of stone
-	lda $0a         // move stone pointer one row down
-	clc
-	adc #$16
-	bcc l1dd3
-	inc $0b
-l1dd3	sta $0a
-
-l1d8c	ldy #$00
-	lda ($0a),y     // read char below new base
-	cmp #$09        // is lower half of stone? (written by previous iteration)
-	beq l1dac       // yes -> continue stone-fall
-	cmp #$20        // blank? -> continue
-	beq l1dac
-        cmp #$11        // is any part of a snake?
-        bcc l1d90
-        cmp #$15+1
-        bcs l1d90
-        lda $0a         // yes -> kill snake
-        sta $10
-        lda $0b
-        sta $11
-        jsr stomp_snake_addr
-        ldx $fa
-        bcs l1d8c       // snake found -> check char below stone again
-        bcc l1de0       // no snake matched (should never be reached)
-
-l1d90   cmp #$1e        // is fire hit by stone?
-	bne l1dd8       // no (and not blank) -> stop stone fall
-	ldy #$2c        // yes -> nearly extinguish fire
-	lda #$b2        // set fire counter to '2'
-	sta ($0a),y
-	lda #$ff        // manipulate timer to make fire counter decrement immediately
-	sta $034a
-	bne l1de0       // end stone fall
-
-l1dac	lda #$16        // draw upper half of stone
-	sta ($0a),y
-	ldy #$16
-	lda ($0a),y
-	cmp #$20        // still blank one row below?
-	bne l1dbc
-	lda #$09        // yes -> draw lower half of stone
-	sta ($0a),y
-l1dbc	jmp l1dec       // continue stone fall in next iteration
-
-l1dd8   lda $0a         // undo last subtraction: pointer into row above base
-	sec
-	sbc #$16
-	bcs l1dd9
-	dec $0b
-l1dd9	sta $0a
-
-        lda $03e1,x     // check egg directory of base/level above
-        and #$ff-$10    // anything below stone?
-        bne l1de0
-        // FIXME enable this after changing egg placement to be less distributed
-	//jsr get_rand    // get RAND number: randomly spawn snake on this level
-        //cmp #64         // probability 64/256 ~ 25%
-        //bcs l1de0
-        lda $0a
-        sta $10
-        lda $0b
-        sta $11
-        jsr get_base_idx_and_xoff
-        bcc l1de0
-        jsr spawn_snake
-
-l1de0   ldx $fa
-        ldy #$16
-        lda ($0a),y
-	cmp #$02        // stone hit base with stone?
-	bne l1de1
-        lda #$01        // yes -> new stone fall at current position
-        bne l1de2
-l1de1   lda #$00        // no -> end stone fall
-l1de2   sta $03e0,x
-
-l1dec	lda $0a
-        sta $03e4,x
-        lda $0b
-        sta $03e5,x
-l1dee	inx
-        inx
-        cpx #$02+1      // next falling stone
-        bcs l1def
-        jmp l1d09
-
-l1def   jmp tick_player // jump back to first of main "tick" loop
-
-// ----------------------------------------------------------------------------
-// Sub-function for starting a stone-fall, usually triggered by user.
-// The function silently ignores if the max. number of falling stones is
-// already reached (i.e. the stone will remain unchanged in that case).
-//
-// Parameters: global $00-$01: player position (read-only)
-// Side-effects: invalidates X
-
-start_stone_fall
-        ldx #$00
-l1df0   lda $03e0,x     // stone instance already active?
-        bne l1df1       // yes -> try next
-        lda $00         // store screen start address, equal player address
-	sta $03e4,x
-	lda $01
-	sta $03e5,x
-        lda #$01        // set initial state
-        sta $03e0,x
-        rts
-l1df1   inx
-        inx
-        cpx #$02+1      // max. no of instances reached?
-        bcc l1df0
         rts
 
 // ----------------------------------------------------------------------------
@@ -2391,8 +2441,8 @@ l2301   sta $03de       // BAK:=val%10
 // ----------------------------------------------------------------------------
 //      Zero-terminated message strings (max 20 chars fit in message box)
 //      Note 1: Characters are screen codes, not ASCII
-//      Note 2: Only upper-case is possible (i.e. ORed $80) as others are
-//              replaced by user-defined characters at $1c00
+//      Note 2: Text has to use reverse char set (i.e. 0x80-0xff),
+//              as others are replaced by user-defined characters at $1c00
 
 l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS BURNING"
         .byt $89,$93,$20
@@ -2436,7 +2486,7 @@ l1324   .byt $84,$89,$85,$84,$20            // "DIED FROM SNAKE BITE"
         .byt $93,$8e,$81,$8b,$85,$20
         .byt $82,$89,$94,$85,$00
 l1330   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
-        .byt $81,$87,$81,$89,$8e,$20
+        .byt $81,$87,$81,$89,$8e,$bf,$20
         .byt $a8,$99,$af,$8e,$a9,$00
 
 //      Table of strings indexed by "post-game" function parameter
@@ -2499,7 +2549,7 @@ l2510   lda l126e-1,x
 
 
 // ----------------------------------------------------------------------------
-// This sub-function sets the color for the complete screen to a fixed value
+// Sub-function for initializing color for the complete screen to a fixed value
 
 #if 0 /* currently unused */
 set_screen_color
@@ -2521,9 +2571,12 @@ l2521   sta ($00),y
 #endif
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function: get random number
+// Sub-function to get random number in range 0..255
+// Parameters: none
+// Side-effects: external sub-function may be called
+//               at least X,Y and $8c-$8f modified
+// Results: A = random value $00..$ff
 
-//                      // Sub-function to get random number in range 0..255
 get_rand
         ldy $03ee
         cpy #$04
@@ -2603,7 +2656,7 @@ l2404	lda l1258-1,x
 	dex
 	bne l2404
 
-        ldx #$0f
+        ldx #$10
 l2408	lda l1330-1,x   // print "TRY AGAIN?"
 	sta $11a2+4*22+3,x
 	dex
