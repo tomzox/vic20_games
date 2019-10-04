@@ -58,9 +58,11 @@ _start_data = $1240
 // $0a-$0b: stone
 // $0c-$0d: digit under fire
 // $0e-$0f: address dino foot
-// $fa:     temporary
+// $10-$11: temp pointer
 
-// $0340: 0=lift egg; else:put down egg
+// $fa
+
+// $0340: saved color below player (companion to $0346)
 // $0341: number of collected eggs; >$7f:wood
 // $0342: counter snakes
 // $0343: score BCD, lower nibbles
@@ -82,6 +84,7 @@ _start_data = $1240
 //                mask $1f: egg count
 //                mask $10: stone
 //                mask $20: wood
+//                mask $40: power gain
 //                mask $80: ladder <-> blocked for content
 // $03de: temporary
 
@@ -117,9 +120,9 @@ l1250   .word $0384+$16+$16+$16
         .word $0384+$16
         .word $0384
         // box for status messages (initially containing "----")
-l1258   .byt $20,$20,$f0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$ee,$20,$20
-l126f   .byt $20,$20,$dd,$20,$20,$20,$20,$20,$20,$ad,$ad,$ad,$ad,$20,$20,$20,$20,$20,$20,$dd,$20,$20
-        .byt $20,$20,$ed,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$fd,$20,$20
+l1258   .byt $f0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$ee
+l126e   .byt $dd,$20,$20,$20,$20,$20,$20,$20,$20,$ad,$ad,$ad,$ad,$20,$20,$20,$20,$20,$20,$20,$20,$dd
+        .byt $ed,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$c0,$fd
         // boxes for egg count & score
         // "  --  " "DINO EGGS" ... "0"
         .byt $f0,$c0,$c0,$c0,$c0,$c0,$c0,$ee,$20,$20,$20,$20,$20,$20,$20,$20,$20,$f0,$c0,$c0,$c0,$ee
@@ -127,23 +130,31 @@ l126f   .byt $20,$20,$dd,$20,$20,$20,$20,$20,$20,$ad,$ad,$ad,$ad,$20,$20,$20,$20
         .byt $ed,$c0,$c0,$c0,$c0,$c0,$c0,$fd,$20,$20,$20,$20,$20,$20,$20,$20,$20,$ed,$c0,$c0,$c0,$fd
 l1258_
 
-        // text
+        // carry status texts
 l12da   .byt $20,$97,$8f,$8f,$84,$20    // " WOOD "
 l12de   .byt $85,$87,$87,$20            // "EGG "
 l12df   .byt $85,$87,$87,$93            // "EGGS"
-l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS ON "
-        .byt $89,$93,$20,$8f,$8e,$20
+        // zero-terminated message strings
+l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS ON"
+        .byt $89,$93,$20,$8f,$8e,$00
+l12e4   .byt $86,$89,$92,$85,$20        // "FIRE IS OUT"
+        .byt $89,$93,$20,$8f,$95,$94,$00
 l12ed   .byt $8d,$81,$8b,$85,$20        // "MAKE A FIRE"
         .byt $81,$20
-l12f4   .byt $86,$89,$92,$85
+        .byt $86,$89,$92,$85,$00
 l12f8   .byt $84,$89,$8e,$8f,$20        // "DINO MUM COMING"
         .byt $8d,$95,$8d,$20
-        .byt $83,$8f,$8d,$89,$8e,$87
-l1307   .byt $81,$94,$94,$81,$83,$8b    // "ATTACK"
-l130d   .byt $87,$8f,$89,$8e,$87        // "GOING OUT"
-l1312   .byt $20,$8f,$95,$94
-l1316   .byt $90,$8f,$97,$85,$92,$20    // POWER GAIN"
-        .byt $87,$81,$89,$8e
+        .byt $83,$8f,$8d,$89,$8e,$87,$00
+l1307   .byt $84,$89,$8e,$8f,$20        // "DINO MUM ATTACK"
+        .byt $8d,$95,$8d,$20
+        .byt $81,$94,$94,$81,$83,$8b,$00
+l130d   .byt $86,$89,$92,$85,$20,$89,$93,$20 // "FIRE IS GOING OUT"
+        .byt $87,$8f,$89,$8e,$87,$20
+        .byt $8f,$95,$94,$00
+l1316   .byt $90,$8f,$97,$85,$92,$20    // "POWER GAIN"
+        .byt $87,$81,$89,$8e,$00
+l1317   .byt $94,$8f,$8f,$20            // "TOO HEAVY"
+        .byt $88,$85,$81,$96,$99,$00
 
 //l132f   .byt $00,$00,$00,$00,$00,$00    // "CONTERMINATION"
 //        .byt $00,$00,$00,$00,$00,$00
@@ -272,11 +283,11 @@ l14b7	lda #$20
 	jmp l1334
 
 l14cd	ldx #$00        // ladders
-l13cf	lda $04,x
+l13cf	lda $04,x       // get n-th base address from address list
 	sta $fd
 	lda $05,x
 	sta $fe
-	stx $00
+	stx $00         // backup iteration counter
 l14d9	jsr $e094       // get RAND number
 	lda $8d
 	and #$1f
@@ -331,20 +342,16 @@ l152d	sta ($fc),y     // initialize egg counter: 0 or BLOCKED
 	dex
 	bpl l1513
 
-	lda #$36         // --- distribute 54 eggs randomly across levels ---
-	sta $00
-l153a	jsr $e094       // get RAND number
+l15f3	jsr $e094       // --- place power gain at random position ---
 	lda $8d
 	and #$7f
 	cmp #$58
-	bcs l153a
+	bcs l15f3
 	tax
 	lda $0384,x     // start of egg directory
-	cmp #$03
-	bcs l153a       // already full -> try again
-	inc $0384,x     // put an egg here
-	dec $00
-	bne l153a
+	bne l15f3       // blocked -> try again
+	lda #$40        // set flag for power gain in egg directory
+	sta $0384,x
 
 	lda #$04        // --- distribute 4 pieces of wood randomly ---
 	sta $00
@@ -355,13 +362,28 @@ l1558	jsr $e094       // get RAND number
 	bcs l1558
 	tax
 	lda $0384,x
-	bne l1558       // try again if position used for egg already
+	bne l1558       // try again if position blocked or used already
 	lda #$20
 	sta $0384,x     // store code for wood in egg directory
 	dec $00
 	bne l1558
 
-	lda #$20        // --- distribute 32 stones randomly ---
+	lda #$36         // --- distribute 54 eggs randomly across levels ---
+	sta $00
+l153a	jsr $e094       // get RAND number
+	lda $8d
+	and #$7f
+	cmp #$58
+	bcs l153a
+	tax
+	lda $0384,x     // start of egg directory
+	cmp #$03
+	bcs l153a       // already full or blocked -> try again
+	inc $0384,x     // put an egg here
+	dec $00
+	bne l153a
+
+	lda #$20        // --- distribute 32 stones randomly (possibly on top of items) ---
 	sta $00
 l1576	jsr $e094       // get RAND number
 	lda $8d
@@ -371,12 +393,12 @@ l1576	jsr $e094       // get RAND number
 	tax
 	lda $0384,x
 	bmi l1576       // position blocked (ladder) -> try again
-	ora #$10        // OR stone flag (maybe on top of egg or wood)
+	ora #$10        // OR stone flag in egg directory (maybe on top of egg or wood)
 	sta $0384,x
 	dec $00
 	bne l1576
 
-	ldx #$06        // --- draw eggs, stones, and wood on screen ---
+	ldx #$06        // --- draw objects (eggs, stones, etc.) ---
 l1592	lda $02,x
 	sta $fa
 	lda $03,x
@@ -385,14 +407,19 @@ l1592	lda $02,x
 	sta $fc
 	lda l1250+1,x
 	sta $fd
+
 	ldy #$15        // first loop across all columns: draw in row below the base
 l15a6	lda ($fc),y     // read egg directory of this pos
 	and #$10        // stone?
 	beq l15b4
 	lda #$09        // char for "lower half of stone"
 	bne l15bb
-l15b4	lda ($fc),y     // read egg directory of this pos
-	and #$0f
+l15b4	lda ($fc),y
+        cmp #$40
+        bne l15b8
+        lda #$0b        // char for "lower half of power gain"
+        bne l15bb
+l15b8   and #$0f
         cmp #$02        // two or more eggs?
         bcc l15cb
 	clc
@@ -413,14 +440,18 @@ l15cb	dey
 
 	ldy #$15        // second loop across all columns: draw in row of base itself
 l15d0	lda ($fc),y
-	and #$3f        // any item in this column? (egg, stone, wood)
+	and #$7f        // strip "blocked" flag
 	beq l15ec       // nothing here -> skip
 	and #$10        // stone?
 	beq l15de
 	lda #$02        // base with stone
 	bne l15ea
-l15de	lda ($fc),y
-	cmp #$20        // wood?
+l15de   lda ($fc),y
+        cmp #$40        // power gain?
+	bcc l15e0
+	lda #$04        // base with power-gain
+	bne l15ea
+l15e0   cmp #$20        // wood?
 	bcc l15e8
 	lda #$03        // base with wood
 	bne l15ea
@@ -432,32 +463,6 @@ l15ec	dey
 l15ef	dex             // next iteration of levels
 	dex
 	bpl l1592
-
-l15f3	jsr $e094       // --- power gain ---
-	lda $8d
-	and #$03
-	asl
-	tax             // select random level 0..3
-	lda $02,x       // get start address on screen of selected base
-	sta $fa
-	lda $03,x
-	sta $fb
-l1604	jsr $e094       // get RAND number
-	lda $8d
-	and #$1f
-	cmp #$16
-	bcs l1604
-	tay
-	lda ($fa),y     // selected pos empty?
-	bne l1604       // no -> try again
-	lda #$04        // draw char for "base with power gain"
-	sta ($fa),y
-	tya             // calc address of lower half
-	clc
-	adc #$16
-	tay
-	lda #$0b        // draw char for "lower half of power gain"
-	sta ($fa),y
 
 	ldx #(l1258_-l1258) // print initial status display
 l1625	lda l1258-1,x
@@ -474,11 +479,13 @@ l1625	lda l1258-1,x
 l1638	sta $0340,x
 	dex
 	bpl l1638
-	lda #$20
+	lda #$20        // initialize char & color under player figure
 	sta $0346
+        lda #$00
+	sta $0340
 	lda #$a0
-	sta $034c
-	lda #$01
+	sta $034c       // initialize timer for first warning "make a fire"
+	lda #$01        // initialize fire status: not burning
 	sta $034d
 
 	ldx #$06        // initialize snake addresses: first column in each level
@@ -502,7 +509,7 @@ l1662	lda #$a0
 	bpl l1662
 
 // ----------------------------------------------------------------------------
-//                      // Player home
+//                      // Place player home randomly
 
 l1670	lda $8c         // --- select random start position for player ---
 	and #$03        // random level 0..3
@@ -547,9 +554,9 @@ l16b7	lda $fa
 	sec
 	sbc #$16
 	sta $00
-	ldy #$00
 	lda #$0c        // code for normal player" figure
-	sta ($00),y
+	jsr draw_player
+	ldy #$00
 	lda #$14        // draw home
 	sta ($08),y
 	iny
@@ -562,24 +569,37 @@ l16b7	lda $fa
 	iny
 	sta ($08),y
 	ldy #$00
+        lda $08         // calc color address: +$9400 -$1000
+        sta $10
+        lda $09
+        clc
+        adc #$94-$10
+        sta $11
+        lda #$05        // color green
+	sta ($10),y
+	iny
+	sta ($10),y
+	iny
+	sta ($10),y
+	ldy #$16
+	sta ($10),y
+	iny
+	iny
+	sta ($10),y
 
 // ----------------------------------------------------------------------------
-//                      // Player
+//                      // Player actions
 
 l1700	lda $0347
 	and #$e0
 	beq l1745
-        ldy #$00        // --- jump to the left ongoing ---
-	lda $0346
-	sta ($00),y
+        jsr undraw_player // --- jump to the left ongoing ---
 	lda $00         // move player one to the left
 	bne l1719
 	dec $01
 l1719	dec $00
-	lda ($00),y
-	sta $0346
 	lda #$0e
-	sta ($00),y
+	jsr draw_player
 	lda $0347       // determine next stage
 	cmp #$40
 	beq l172c
@@ -592,15 +612,12 @@ l172e	sta $0347
 l1745	lda $0347       // --- start jump to the right ---
 	and #$0e
 	beq l1786
-	lda $0346       // delete player (restore stored background char)
-	sta ($00),y
+	jsr undraw_player
 	inc $00         // player pos one to the right
 	bne l175e
 	inc $01
-l175e   lda ($00),y
-	sta $0346
-	lda #$0f
-	sta ($00),y
+l175e   lda #$0f
+	jsr draw_player
 	lda $0347       // determine next stage
 	cmp #$04
 	beq l176f
@@ -621,16 +638,13 @@ l178e	ldy #$16
 	cmp #$07        // any kind of base?
 	bcc l17c9
 	ldy #$00        /// --- free fall ---
-	lda $0346       // delete player char
-	sta ($00),y
+	jsr undraw_player
 	lda $00         // move player one row down
 	clc
 	adc #$16
 	bcc l17aa
 	inc $01
 l17aa	sta $00
-	lda ($00),y
-	sta $0346
 	lda $0347       // select new player char depending on current direction
 	bne l17ba
 l17b6	lda #$0c        // standing still
@@ -640,7 +654,7 @@ l17ba	and #$0f
 	lda #$0e        // player facing left
 	bne l17c4
 l17c2	lda #$0f        // player facing right
-l17c4	sta ($00),y
+l17c4	jsr draw_player
 	jmp l1e0d
 
 l17c9   lda $0347
@@ -655,19 +669,15 @@ l17c9   lda $0347
 l17d8	lda $911f       // joystick left or fire?
 	and #$30
 	bne l1807
-l17df	lda $0346       // --- trigger jump to the left ---
-	ldy #$00
-	sta ($00),y     // deleting player
+l17df	jsr undraw_player // --- trigger jump to the left ---
 	lda $00         // moving one row up and one col to the left
 	sec
 	sbc #$17
 	bcs l17f4
 	dec $01
 l17f4	sta $00
-	lda ($00),y
-	sta $0346
 	lda #$0e
-	sta ($00),y
+	jsr draw_player
 	lda #$20        // store direction indicator (needed for allowing jump)
 	sta $0347
 	jmp l1e0d
@@ -689,19 +699,15 @@ l1814	lda $911f       // joystick fire button?
 	lda $9120       // joystick right?
 	and #$80
 	bne l184f
-l1827   lda $0346       // --- trigger jump to right ---
-	ldy #$00
-	sta ($00),y
+l1827   jsr undraw_player  // --- trigger jump to right ---
 	lda $00         // moving one row up and one to the right
 	sec
 	sbc #$15
 	bcs l183c
 	dec $01
 l183c	sta $00
-	lda ($00),y
-	sta $0346
 	lda #$0f
-	sta ($00),y
+	jsr draw_player
 	lda #$02        // store jump status
 	sta $0347
 	jmp l1e0d
@@ -712,19 +718,15 @@ l184f	lda $cb
 	lda $911f       // joystick left?
 	and #$10
 	bne l187f
-l1861	lda $0346       // delete player
-	ldy #$00
-	sta ($00),y
+l1861	jsr undraw_player
 	lda $00         // player one to the right
 	bne l186c
 	dec $01
 l186c	dec $00
 	lda #$10
 	sta $0347
-	lda ($00),y
-	sta $0346
 	lda #$0e
-	sta ($00),y
+	jsr draw_player
 	jmp l1e0d
 
 l187f	lda $cb
@@ -739,22 +741,20 @@ l188c	lda $0346       // check char below player
 	cmp #$05        // base with ladder?
 	bne l18b3
 l1897	sta $0348       // --- climbing ---
-        ldy #$00
-	sta ($00),y     // delete player
+        jsr undraw_player
 	lda $00         // move player up one row
 	sec
 	sbc #$16
 	bcs l18a5
 	dec $01
 l18a5	sta $00
-	lda ($00),y
-	sta $0346
-	lda #$0d        // draw player at new pos; climbing player figure
-	sta ($00),y
+	lda #$0d        // draw climbing player figure
+	jsr draw_player
 	jmp l1e0d
-l18b3	ldy #$00
-	sty $0348       // clear climbing status
+l18b3	lda #$00
+	sta $0348       // clear climbing status
 	lda #$0c        // draw normal player figure
+        ldy #$00
 	sta ($00),y
 	jmp l1e0d
 
@@ -768,23 +768,21 @@ l18ba	lda $0348
 	lda $9120       // joystick right?
 	and #$80
 	bne l1903
-l18d6	lda $0346
-        ldy #$00
-	sta ($00),y
+l18d6	jsr undraw_player
 	inc $00
 	bne l18e1
 	inc $01
 l18e1	lda ($00),y
-	cmp #$07
+	cmp #$07        // wrapped at right screen border? (i.e. ran into base char)
 	bcs l18f2
-	lda $00
+	lda $00         // yes -> move to left-most column, -1 row to (mimic inverse direction)
 	sec
-	sbc #$16
-	sta $00
-l18f2	lda ($00),y
-	sta $0346
-	lda #$0f
-	sta ($00),y
+	sbc #22*2
+	bcs l18f1
+	dec $01
+l18f1	sta $00
+l18f2	lda #$0f
+	jsr draw_player
 	lda #$01
 	sta $0347
 	jmp l1e0d
@@ -804,24 +802,21 @@ l1910	ldy #$16        // read char one row below player
 	cmp #$05
 	bne l193d
 l191e	sta $0348       // start descending
-	ldy #$00
-	lda $0346
-	sta ($00),y
+	jsr undraw_player
 	lda $00         // move player one row down
 	clc
 	adc #$16
 	bcc l192f
 	inc $01
 l192f	sta $00
-	lda ($00),y
-	sta $0346
 	lda #$0d        // draw player; climbing form
-	sta ($00),y
+	jsr draw_player
 	jmp l1e0d
 l193d	ldy #$00
 	sty $0348       // reset climbing status
 	lda #$0c        // draw player in normal form
-	sta ($00),y
+	ldy #$00
+        sta ($00),y
 	jmp l1e0d
 
 l1944	lda $cb
@@ -833,39 +828,42 @@ l1944	lda $cb
 l1951	lda $0346
 	cmp #$0a        // ladder behind player?
 	beq l196e
-l1958	ldy #$00
-	sta ($00),y     // delete player figure
+l1958	jsr undraw_player
 	lda $00         // move player up by 2 rows
 	sec
 	sbc #$2c
 	bcs l1963
 	dec $01
 l1963	sta $00
-	lda ($00),y
-	sta $0346
-	lda #$0c        // draw player figure; climbing form
-	sta ($00),y
+	lda #$0c        // draw player figure; normal form
+	jsr draw_player
 	jmp l1e0d
 
 l196e	lda $cb
 	cmp #$3f        // key F7?
 	beq l197e
-	cmp #$20        // space key?
+	cmp #55         // key F5?
 	beq l197e
 l1974	lda $911f       // joystick xxx?
 	and #$28
 	beq l197e
 	jmp l1e08       // to "player no action"
+
+                        // --- check F7 in home base? ---
 l197e	ldy #$17        // check if player at home:
 	lda ($08),y
 	cmp #$0c        // player figure (any shape) at home position?
 	bcc l19ae       // no -> abort
 	cmp #$10
 	bcs l19ae
+        lda $0341       // carrying at least 3 eggs?
+        and #$7f
+        cmp #$03
+        bcc l19ae       // no -> abort
 	lda $034d
 	cmp #$08        // player attacked by dino mum?
 	bcs l19ae       // yes -> abort
-	lda #$20        // blank behind player?
+	lda #$20        // blank behind player? (simplification)
 	cmp $0346
 	bne l19ae       // no -> abort
 	ldy #$00
@@ -880,141 +878,117 @@ l197e	ldy #$17        // check if player at home:
 	sta ($08),y
 	iny
 	sta ($08),y
-	sty $034b       // clear power gain
-	lda $0341       // player carrying eggs?
+        lda #$00        // clear power gain
+	sta $034b
+	lda $0341       // add number of carried eggs to score
 	and #$7f
         beq l19a0
         jsr add_score
         lda #$00
-        sta $0340       // reset egg counter and pickup mode
-        sta $0341
+        sta $0341       // reset egg counter
         jsr prt_egg_status
+        lda $0343       // all eggs picked up? (assuming one point is scored per egg)
+        cmp #$54        // binary $36 <=> decimal (BCD) 54 (ignore third nibble $0344)
+        bne l19a0
+        lda #$00        // yes -> game won!
+        jmp post_game
 l19a0   jmp l1670       // -> move player to random position
 
+                        // --- F7 to pick up wood (& light fire)? ---
 l19ae	ldy #$16        // read char one row below player
 	lda ($00),y
 	cmp #$03        // base with wood under player?
-	bne l1a23
+	bne l1a61
 	lda $0341       // player already carrying eggs?
 	and #$7f
 	bne l1a20       // yes -> abort
 	lda $0341       // player already carrying wood?
 	and #$80
-	bne l19d8       // yes -> make a fire here
-	sta ($00),y     // no; remove wood (i.e. draw empty base)
+	bne l19d8       // yes -> try making a fire here
+        lda #$00        // remove wood (i.e. draw empty base)
+	sta ($00),y
 	lda #$80        // remember carrying wood
 	sta $0341
         jsr prt_egg_status
+	jmp l1e0d
 
-l19d8	lda $034d       // fire burning?
-	beq l1a20
-l19dd	lda $0346
+                        // --- try lighting a fire ---
+l19d8	lda $034d       // fire already burning?
+	beq l1a20       // yes -> abort
+	lda $0346
 	cmp #$20        // blank behind player?
 	bne l1a20       // no -> cannot make fire here
-l19e4	ldx #$16        // clear message
-l19e6	lda l126f-1,x
-	sta $11a2+22-1,x
-	dex
-	bne l19e6
+	ldy #$16        // remove wood (i.e. draw empty base below player)
+        lda #$00
+	sta ($00),y
 	lda #$15        // fire char behind player
 	sta $0346
+	lda #$07        // yellow
+	sta $0340
 	lda #$20        // start fire immunity counter
 	sta $0349
-	ldy #$16
-	lda #$00
-	sta ($00),y
+	lda #$00        // clear carry status
 	sta $0341
         jsr prt_egg_status
-	ldx #$0b
-l1a03	lda l12e3-1,x   // print "FIRE IS ON "
-	sta $11ba,x
-	dex
-	bne l1a03
-	ldy #$00
-	sty $034d       // fire status: burning
+        lda #<l12e3     // print "FIRE IS ON"
+        sta $10
+        lda #>l12e3
+        sta $11
+        jsr prt_message
+	lda #$00
+	sta $034d       // fire status: burning
 	lda $01         // store address of digit under fire
 	sta $0d
 	lda $00
 	sta $0c
 	ldy #$2c
-	lda #$b9        // print inverted '9' below fire
+	lda #$b9        // print inverted '9' below base below fire
 	sta ($0c),y
+        lda $0c         // calc color address: ($00) + $9400 -$1000
+        sta $10
+        lda $0d
+        clc
+        adc #$94-$10
+        sta $11
+        lda #$07
+	sta ($10),y
 l1a20	jmp l1e0d
 
-l1a23	cmp #$00        // empty base under player?
-	bne l1a4e
-	lda $0341       // player carrying wood?
-	bpl l1a4e
-	ldy #$2c
-	lda ($00),y
-	cmp #$b1        // fire counter == '1'?
-	bcs l19e4
-	ldy #$16        // start new fire
-	lda #$03        // put down wood
-	sta ($00),y
-	lda #$00        // player has empty hands
-	sta $0341
-        jsr prt_egg_status
-	jmp l1e0d
-
-l1a4e	lda $0340       // player in egg-lifting mode?
-	bne l1ad0
-l1a53	lda $0341       // player already carrying wood?
-	bmi l1ad0
-	cmp #$03        // no; carrying less than 3 eggs?
-	bcc l1a61
-	lda $034b       // power gain?
-                        // TODO message "4th egg too heavy"
-	beq l1ad0       // no -> cannot pick up another egg
-l1a61	ldy #$2c        // --- take eggs ---
+                        // --- F7 to pick up eggs? ---
+l1a61	ldy #$2c
 	lda ($00),y     // read char 2 rows below player
 	cmp #$08        // char for two eggs?
 	bne l1a6d
-	lda #$07        // yes -> change to one egg
+	ldx #$07        // yes -> change to one egg
 	bne l1a7f
 l1a6d	cmp #$07        // char for one egg?
 	bne l1a75
-	lda #$20        // yes -> change to empty
+	ldx #$20        // yes -> change to empty
 	bne l1a7f
 l1a75	ldy #$16        // read char 1 row below player
 	lda ($00),y
 	cmp #$01        // char for base with egg?
-	bne l1ad0       // no -> no eggs for picking up here
-	lda #$00        // yes -> change to empty base
-l1a7f	sta ($00),y     // draw char with one egg less
+	bne l1b2d       // no -> no eggs for picking up here
+	ldx #$00        // yes -> change to empty base
+l1a7f   lda $0341       // already carrying 3 eggs?
+	cmp #$03
+	bcc l1a80
+	lda $034b       // power gain?
+	bne l1a80
+	lda #<l1317     // no -> print "TOO HEAVY"
+        sta $10
+	lda #>l1317
+        sta $11
+                        // TODO clear message after timer
+        jsr prt_message
+	jmp l1e0d
+l1a80	txa
+        sta ($00),y     // draw char with one egg less
 	inc $0341       // increment player's egg counter
         jsr prt_egg_status
 	jmp l1e0d
 
-l1ad0	lda $0340       // player in egg-dropping mode?
-	bne l1adc
-	lda $0341
-	cmp #$03        // carrying 3 eggs?
-	bne l1b2d
-l1adc	ldy #$16        // put down eggs
-	lda ($00),y
-	bne l1ae6
-	lda #$01
-	bne l1af8
-l1ae6	ldy #$2c
-	lda ($00),y
-	cmp #$20
-	bne l1af2
-	lda #$07
-	bne l1af8
-l1af2	cmp #$07
-	bne l1b2d
-	lda #$08
-l1af8	sta ($00),y
-	sta $0340       // switch to egg-dropping mode
-	dec $0341       // carrying one egg less
-	lda $0341
-	bne l1b0a
-	lda #$00        // no eggs -> clear carrying status
-	sta $0340
-l1b0a   jsr prt_egg_status
-	jmp l1e0d
-
+                        // --- F7 to pick up power-gain? ---
 l1b2d	ldy #$16        // read char one row below player
 	lda ($00),y
 	cmp #$04        // base with power gain?
@@ -1025,18 +999,51 @@ l1b2d	ldy #$16        // read char one row below player
 	lda #$20
 	ldy #$2c
 	sta ($00),y
-	ldx #$0a
-l1b44	lda l1316-1,x   // print "POWER GAIN"
-	sta $11ba,x
-	dex
-	bne l1b44
-l1b4d	lda #$30        // grant fire immunity
+	lda #<l1316     // print "POWER GAIN"
+        sta $10
+	lda #>l1316
+        sta $11
+        jsr prt_message
+	lda #$30        // grant fire immunity
 	sta $0349
 l1b52	jmp l1e0d
 
 l1b55	cmp #$02        // base with stone?
-	bne l1b52
+	bne l1a23
 	jmp l1d08       // to stone fall
+
+                        // --- F7 to drop carried egg or wood? ---
+l1a23	cmp #$00        // empty base under player?
+	bne l1b52       // no -> abort; cannot handle F7
+	lda $0341       // player carrying wood?
+	bpl l1a4e
+	ldy #$16        // put down wood
+	lda #$03
+	sta ($00),y
+	lda #$00        // clear carry status
+	sta $0341
+        jsr prt_egg_status
+	jmp l1e0d
+
+l1a4e	lda $0341       // player carrying any eggs?
+	beq l1b52       // no -> abort
+        lda #$01        // at least one egg -> replace empty base char with base with egg
+        sta ($00),y
+        dec $0341
+        lda $0341
+        beq l1af9       // no more eggs left -> done
+        cmp #$02
+        bcs l1af0       // goto >=2 eggs
+        lda #$07        // char for one egg
+        bne l1af8
+l1af0   lda #$08        // char for two eggs
+        dec $0341
+l1af8	dec $0341
+        ldy #$2c
+        sta ($00),y     // write char below base
+l1af9	jsr prt_egg_status
+	jmp l1e0d
+
 
 // ----------------------------------------------------------------------------
 // Character generator data
@@ -1069,11 +1076,11 @@ l1c00	.byt $ff,$88,$55,$22,$00,$00,$00,$00    // #$00: Base
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$13: dino - UNUSED
 l1ca0	.byt $aa,$00,$55,$00,$aa,$00,$55,$00    // #$14: home - ROR'ed at run-time
 l1ca8	.byt $00,$00,$00,$00,$00,$00,$00,$7e    // #$15: fire - switched at run-time
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$16: stone above w/o base - UNUSED
+	.byt $00,$00,$00,$00,$1c,$2a,$51,$43    // #$16: stone above w/o base
 	.byt $51,$64,$49,$54,$40,$6a,$54,$41    // #$17: foot mid/left
 	.byt $20,$8a,$40,$09,$a0,$15,$40,$15    // #$18: foot mid/mid
 	.byt $82,$22,$42,$12,$42,$02,$a2,$02    // #$19: foot mid/right
-	.byt $20,$8a,$40,$09,$a0,$15,$40,$15    // #$1a: foot low/left
+	.byt $64,$4a,$60,$50,$40,$41,$41,$3e    // #$1a: foot low/left
 	.byt $42,$15,$80,$00,$00,$01,$81,$70    // #$1b: foot low/mid
 	.byt $42,$12,$82,$02,$02,$02,$82,$7c    // #$1c: foot low/right
 	.byt $20,$48,$53,$54,$54,$53,$48,$20    // #$1d: snake egg left
@@ -1095,11 +1102,8 @@ l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$15: fire v2
 // .******.        .******.
 
 // ----------------------------------------------------------------------------
-// fill up to next segment
-//.dsb $1d08 - *, 0
-// * = $1d08
+//                      // Stone fall
 
-                        // --- stone fall ---
 l1d08	lda $00         // determine which base/level player is on
 	sta $0a
 	lda $01
@@ -1126,42 +1130,53 @@ l1d27	sta $fa         //  pos in level equiv. pos. in egg register
 	sbc $fa
 	tay
 	sty $fa
-	lda ($fb),y
-	and #$23
+	lda ($fb),y     // query egg directory for this position
+        cmp #$40
+        bcc l1d40
+	lda #$04        // char for base with power-gain
+	bne l1d4d
+l1d40	and #$23
 	cmp #$10
 	bcc l1d47
-	lda #$03        // base with wood
+	lda #$03        // char for base with wood
 	bne l1d4d
 l1d47	cmp #$01
 	bcc l1d4d
-	lda #$01        // base with egg
+	lda #$01        // char for base with egg
 l1d4d	ldy #$16
+	sta ($0a),y     // draw new base char
+	ldy #$2c        // offset to row below base
+	lda #$16        // char for upper half of stone without base
 	sta ($0a),y
-	ldy #$2c        // or upper half of stone
-	lda #$16
-	sta ($0a),y
-	ldy #$42
+	ldy #$42        // offset two rows below base
 	lda ($0a),y
 	cmp #$20        // room for lower half of stone?
 	bne l1d63
 	lda #$09        // draw lower half of stone
 	sta ($0a),y
+
 l1d63	ldy #$30        // time delay
 l1d65	ldx #$ff
 l1d67	dex
 	bne l1d67
 l1d6a	dey
 	bne l1d65
+
 	ldy $fa
-	lda ($fb),y     // value from egg register
-	and #$03
+	lda ($fb),y     // query egg register again
+	cmp #$40        // power gain?
+        bcc l1d70
+        lda #$0b        // char for lower half of power gain
+        bne l1d7d
+l1d70	and #$03
 	cmp #$02        // more than one egg?
 	bcc l1d7b
-	adc #$04        // 3 or 4 eggs
+	adc #$07-2-1    // char for one or two eggs (-2 for egg# >=2; -1 due to omitting CLC)
 	bne l1d7d
-l1d7b	lda #$20        // no egg
-l1d7d	ldy #$2c        // stone address + 3 rows
+l1d7b	lda #$20        // blank char
+l1d7d	ldy #$2c        // stone address + 2 rows
 	sta ($0a),y
+
 	lda $0a
 	clc
 	adc #$42
@@ -1176,13 +1191,13 @@ l1d8c	ldy #$00        // start loop
 	beq l1dac
 	cmp #$15        // fire hit by stone?
 	bne l1dd8
-	tya             // yes -> fire counter/digit to '1'
+	tya             // yes -> nearly extinguish fire
 	clc
 	adc #$2c
 	tay
-	lda #$b2
+	lda #$b2        // set fire counter to '2'
 	sta ($0a),y
-	lda #$ff
+	lda #$ff        // make fire counter decement immediately
 	sta $034a
 	bne l1dd8       // end stone fall
 l1dac	lda #$16        // upper half of stone
@@ -1199,16 +1214,17 @@ l1dc0	dex
 	bne l1dc0
 l1dc3	dey
 	bne l1dbe
-l1dc6	lda #$20        // remove upper half of stone
+	lda #$20        // remove upper half of stone
 	sta ($0a),y
-	lda $0a
+	lda $0a         // move stone pointer one row down
 	clc
 	adc #$16
 	bcc l1dd3
-l1dd1	inc $0b
+	inc $0b
 l1dd3	sta $0a
 	clc
 	bcc l1d8c       // loop while stone falling
+
 l1dd8	lda ($0a),y
 	cmp #$02        // base with stone?
 	bne l1dec
@@ -1264,11 +1280,7 @@ l1e44	lda $0349       // immunity counter running?
 	beq l1e59
 	dec $0349       // decrement immunity counter
 	bne l1e59
-	ldx #$16        // clear display ("FIRE IS ON")
-l1e50	lda l126f-1,x
-	sta $11a2+22-1,x
-	dex
-	bne l1e50
+        jsr clr_message // clear display ("FIRE IS ON" et.al.)
 
 l1e59	ldx #$08        // rotate home char definition by one bit right: shimmering effect
 l1e5b	lda l1ca0-1,x
@@ -1306,17 +1318,12 @@ l1e67   inc $034a       // increment game loop counter
 	sta ($0c),y
 	cmp #$b1        // '1'?
 	bne l1eb4
-	ldx #$04        // print "FIRE "...
-l1e98	lda l12f4-1,x
-	sta $11ba,x
-	dex
-	bne l1e98
-	ldx #$09        // print "GOING OUT"
-l1ea3	lda l130d-1,x
-	sta $11bf,x
-	dex
-	bne l1ea3
-l1eac	lda #$20
+	lda #<l130d     // print "FIRE IS GOING OUT"
+        sta $10
+	lda #>l130d
+        sta $11
+        jsr prt_message
+        lda #$20
 	sta $0349
 l1eb1	jmp l2100
 l1eb4	cmp #$b0        // '0'?
@@ -1337,15 +1344,14 @@ l1ecc	ldy #$2c
 	lda #$fe        // timer for issuing next warning message
 	sta $034c
 	ldx #$0b-2
-l1edc	lda l12e3-1,x   // print "FIRE IS O"
-	sta $11ba,x
-	dex
-	bne l1edc
-	lda #$95        // print "U"
-	sta $11ba+$0a
-	lda #$94        // print "T"
-	sta $11ba+$0b
-	bne l1eac
+        lda #<l12e4     // print "FIRE IS OUT"
+        sta $10
+        lda #>l12e4
+        sta $11
+        jsr prt_message
+        lda #$20
+	sta $0349
+	jmp l2100
 
 l1ef1	lda $034d
 	and #$f8
@@ -1360,11 +1366,11 @@ l1f08	lda $034d
 	beq l1f00       // fire burning -> nothing to do
 l1f0d	cmp #$01        // fire status 1? (fire freshly out)
 	bne l1f2e
-l1f11	ldx #$0b        // print "MAKE A FIRE"
-l1f13	lda l12ed-1,x
-	sta $11ba,x
-	dex
-	bne l1f13
+	lda #<l12ed     // print "MAKE A FIRE"
+        sta $10
+	lda #>l12ed
+        sta $11
+        jsr prt_message
 	lda #$02        // new fire status
 	sta $034d
 	lda #$f0        // counter up to next status message
@@ -1375,11 +1381,11 @@ l1f26	lda #$20
 
 l1f2e	cmp #$02        // fire status 2?
 	bne l1f49
-l1f32	ldx #$0f        // print "DINO MUM COMING"
-l1f34	lda l12f8-1,x
-	sta $11ba,x
-	dex
-	bne l1f34
+	lda #<l12ed     // print "DINO MUM COMING"
+        sta $10
+	lda #>l12ed
+        sta $11
+        jsr prt_message
 	lda #$d0
 	sta $034c
 	lda #$04
@@ -1388,16 +1394,11 @@ l1f34	lda l12f8-1,x
 
 l1f49	cmp #$04        // fire status 4?
 	bne l1f9c
-l1f4d	ldx #$09        // print "DINO MUM "
-l1f4f	lda l12f8-1,x
-	sta $11ba,x
-	dex
-	bne l1f4f
-	ldx #$06        // print "ATTACK"
-l1f5a	lda l1307-1,x
-	sta $11c3,x
-	dex
-	bne l1f5a
+	lda #<l1307     // print "DINO MUM ATTACK"
+        sta $10
+	lda #>l1307
+        sta $11
+        jsr prt_message
 	lda $01         // determine column pos of player
 	sec
 	sbc #$10        // MSB of player offset to screen base address $1000
@@ -1615,6 +1616,47 @@ l2206	lda l12df-1,x   // print "EGGS"
         rts
 
 // ----------------------------------------------------------------------------
+//                      Sub-function: draw player figure
+//                      - Parameter: A = new player char code
+//                      - implied: $00-$01: current player address
+//                      - side-effect: stores char/color under player $0346/$0340
+//                                     overwrites temp pointer $10-$11
+
+draw_player
+        tax
+        lda $00         // calc color address: ($00) + $9400 -$1000
+        sta $10
+        lda $01
+        clc
+        adc #$94-$10
+        sta $11
+
+        ldy #$00        // backup char & color behind player
+	lda ($00),y
+	sta $0346
+	lda ($10),y
+	sta $0340
+        txa
+	sta ($00),y     // write player figure
+        lda #$05        // color green
+	sta ($10),y
+        rts
+
+undraw_player
+	ldy #$00
+        lda $0346
+	sta ($00),y
+        lda $00         // calc color address: ($00) + $9400 -$1000
+        sta $10
+        lda $01
+        clc
+        adc #$94-$10
+        sta $11
+        lda $0340
+	sta ($10),y
+        rts
+
+// ----------------------------------------------------------------------------
 //                      // Sub-function for adding points to score and display
 //                      // Parameter: A = number of points to be added in BCD
 add_score
@@ -1664,66 +1706,97 @@ l2301   sta $03de       // BAK:=val%10
         rts
 
 // ----------------------------------------------------------------------------
+//                      // Sub-function for printing a status message
+//                      // - Parameter: $10-$11: message text address
+
+prt_message
+        ldx #22-2       // clear content
+        lda #$20
+l2501	sta $11a2+22+1-1,x
+	dex
+	bne l2501
+        ldy #$00        // count message length
+l2502   lda ($10),y
+        beq l2503
+        iny
+        bne l2502
+l2503   sty $03de       // calc message offset: 20-len/2
+        lda #20
+        sec
+        sbc $03de
+        lsr
+        tax
+        ldy #$00        // copy message until zero-byte
+l2504   lda ($10),y
+        beq l2505
+        sta $11a2+22+1,x
+        iny
+        inx
+        bne l2504
+l2505   rts
+
+// ----------------------------------------------------------------------------
+//                      // Sub-function for clearing the status text
+
+clr_message
+        ldx #22
+l2510   lda l126e-1,x
+        sta $11a2+22-1,x
+	dex
+	bne l2510
+        rts
+
+// ----------------------------------------------------------------------------
 
 l1320   .byt $82,$95,$92,$8e,$94,$20    // "BURNT TO DEATH"
         .byt $94,$8f,$20
-        .byt $84,$85,$81,$94,$88
+        .byt $84,$85,$81,$94,$88,$00
 l1321   .byt $93,$94,$8f,$8d,$90,$85,$84,$20    // "STOMPED TO DEATH"
         .byt $94,$8f,$20
-        .byt $84,$85,$81,$94,$88
+        .byt $84,$85,$81,$94,$88,$00
 l1322   .byt $83,$8f,$8e,$87,$92,$81,$94,$95    // "CONGRATULATIONS"
-        .byt $8c,$81,$94,$89,$8f,$8e,$93
+        .byt $8c,$81,$94,$89,$8f,$8e,$93,$00
 l1323   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
         .byt $81,$87,$81,$89,$8e,$20
-        .byt $a8,$99,$af,$8e,$a9
-
-// TODO detect won game after F7
+        .byt $a8,$99,$af,$8e,$a9,$00
 
 post_game
-        ldy #$60        // time delay
-l2412	ldx #$ff
-l2413	dex
-	bne l2413
-	dey
-	bne l2412
-        sta $00         // save A
-// FIXME clean rows 24-25 too
-        jsr $e55f       // clear screen
-        lda $00
         cmp #$01        // check reason for game end
         bne l2401
-	ldx #$0e
-l2405	lda l1320-1,x   // print "BURNT TO DEATH"
-	sta $1000+4*22+1,x
-        lda #$01
-	sta $9400+4*22+1,x
-	dex
-	bne l2405
-        beq l2403
+        lda #<l1320     // print "BURNT TO DEATH"
+        sta $10
+        lda #>l1320
+        sta $11
+        jsr prt_message
+        clc
+        bcc l2403
 l2401   cmp #$02
         bne l2402
-	ldx #$10
-l2406	lda l1321-1,x   // print "STOMPED TO DEATH"
-	sta $1000+4*22+1,x
-        lda #$01
-	sta $9400+4*22+1,x
+        lda #<l1321     // print "STOMPED TO DEATH"
+        sta $10
+        lda #>l1321
+        sta $11
+        jsr prt_message
+        clc
+        bcc l2403
+l2402   lda #<l1322     // print "CONGRATULATIONS"
+        sta $10
+        lda #>l1322
+        sta $11
+        jsr prt_message
+
+l2403   ldx #3*22       // overwrite status boxes with another message box
+l2404	lda l1258-1,x
+	sta $11a2+3*22-1,x
 	dex
-	bne l2406
-        beq l2403
-l2402   ldx #$0f
-l2407	lda l1322-1,x   // print "CONGRATULATIONS"
-	sta $1000+4*22+1,x
-        lda #$01
-	sta $9400+4*22+1,x
-	dex
-	bne l2407
-l2403   ldx #$0f
+	bne l2404
+
+        ldx #$0f
 l2408	lda l1323-1,x   // print "TRY AGAIN?"
-	sta $1000+6*22+1,x
-        lda #$01
-	sta $9400+6*22+1,x
+	sta $11a2+4*22+3,x
 	dex
 	bne l2408
+
 l2410   lda $cb         // wait for any keypress or joystick
         cmp #$0b        // key 'Y'
         beq l2411
@@ -1736,3 +1809,5 @@ l2415   lda $cb         // wait for key release
         bne l2415
         jmp $e518
 l2411   jmp l1400       // restart from scratch
+
+// ----------------------------------------------------------------------------
