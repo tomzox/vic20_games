@@ -56,30 +56,32 @@ _start_data = $1240
 // $06-$07: third snake
 // $08-$09: beam station
 // $0a-$0b: stone
-// $0c-$0d: digit under fire
+// $0c-$0d: -unused-
 // $0e-$0f: address dino foot
 // $10-$11: temp pointer
 
-// $fa
+// $fa-$fe: temp var/pointer
 
 // $0340: saved color below player (companion to $0346)
 // $0341: number of collected eggs; >$7f:wood
 // $0342: counter snakes
 // $0343: score BCD, lower nibbles
 // $0344: score BCD, higher nibbles
-// $0345: unused (planned for life counter)
+// $0345: message clearing counter
 // $0346: saved char below player (e.g. ladder)
-// $0347: player direction
+// $0347: player direction & jump status
 // $0348: on ladder? (0:no, else:yes)
 // $0349: counter fire immunity
-// $034a: loop counter
+// $034a: main loop counter
 // $034b: power gain? 0:no else:yes
 // $034c: counter until fire warning
 // $034d: fire status: 0:burning 1:make 2:coming 3:attack 8:stamping
-// $034e,$0350,$0352: snake: char under tail
-// $034f,$0351,$0353: snake: column; $ff=dead (i.e. distance left border)
-// $0354,$0356,$0358: snake: char under head
-// $0355,$0357,$0359: snake egg delay until bursting
+// $034e-$034f: address digit char under fire #1
+// $0350-$0351: address digit char under fire #2
+// XXX $034e,$0350,$0352: snake: char under tail
+// XXX $034f,$0351,$0353: snake: column; $ff=dead (i.e. distance left border)
+// XXX $0354,$0356,$0358: snake: char under head
+// XXX $0355,$0357,$0359: snake egg delay until bursting
 // $0384...$03dd: egg directory (for 4 bases, len=$16 each (see l1250)) bitmask:
 //                mask $1f: egg count
 //                mask $10: stone
@@ -130,13 +132,15 @@ l126e   .byt $dd,$20,$20,$20,$20,$20,$20,$20,$20,$ad,$ad,$ad,$ad,$20,$20,$20,$20
         .byt $ed,$c0,$c0,$c0,$c0,$c0,$c0,$fd,$20,$20,$20,$20,$20,$20,$20,$20,$20,$ed,$c0,$c0,$c0,$fd
 l1258_
 
-        // carry status texts
+        // carry-status texts
 l12da   .byt $20,$97,$8f,$8f,$84,$20    // " WOOD "
 l12de   .byt $85,$87,$87,$20            // "EGG "
 l12df   .byt $85,$87,$87,$93            // "EGGS"
+
         // zero-terminated message strings
-l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS ON"
-        .byt $89,$93,$20,$8f,$8e,$00
+l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS BURNING"
+        .byt $89,$93,$20
+        .byt $82,$95,$92,$8e,$89,$8e,$87,$00
 l12e4   .byt $86,$89,$92,$85,$20        // "FIRE IS OUT"
         .byt $89,$93,$20,$8f,$95,$94,$00
 l12ed   .byt $8d,$81,$8b,$85,$20        // "MAKE A FIRE"
@@ -155,10 +159,6 @@ l1316   .byt $90,$8f,$97,$85,$92,$20    // "POWER GAIN"
         .byt $87,$81,$89,$8e,$00
 l1317   .byt $94,$8f,$8f,$20            // "TOO HEAVY"
         .byt $88,$85,$81,$96,$99,$00
-
-//l132f   .byt $00,$00,$00,$00,$00,$00    // "CONTERMINATION"
-//        .byt $00,$00,$00,$00,$00,$00
-//        .byt $00,$00
 
         // dino mum foot pattern
 l133c   .byt $17,$18,$18,$18,$18,$18,$18,$18,$18,$19 // char codes: foot mid/{left,mid,right}
@@ -472,10 +472,8 @@ l1625	lda l1258-1,x
 	dex
 	bne l1625
 
-	ldy #$00        // reset Y: register is globally assumed to be zero, except for temporary use
-
-	ldx #$16        // initialize player status variables
-	tya
+	ldx #$0359-$0340+1  // initialize status variables
+	lda #$00
 l1638	sta $0340,x
 	dex
 	bpl l1638
@@ -487,7 +485,11 @@ l1638	sta $0340,x
 	sta $034c       // initialize timer for first warning "make a fire"
 	lda #$01        // initialize fire status: not burning
 	sta $034d
+	lda #$00        // invalidate MSB fire address #1 and #2
+	sta $034f
+	sta $034f+2
 
+#if 0
 	ldx #$06        // initialize snake addresses: first column in each level
 l164f	lda l1240+1,x
 	sta $01,x
@@ -507,6 +509,7 @@ l1662	lda #$a0
 	dex
 	dex
 	bpl l1662
+#endif
 
 // ----------------------------------------------------------------------------
 //                      // Place player home randomly
@@ -758,8 +761,8 @@ l18b3	lda #$00
 	sta ($00),y
 	jmp l1e0d
 
-l18ba	lda $0348
-	bne l1903
+l18ba	lda $0348       // on ladder?
+	bne l1903       // yes -> disallow horizontal movement
 	lda $cb
 	cmp #$29        // key 'S' (note: allow SHIFT being pressed already)
 	beq l18d6
@@ -899,60 +902,17 @@ l19ae	ldy #$16        // read char one row below player
 	lda ($00),y
 	cmp #$03        // base with wood under player?
 	bne l1a61
-	lda $0341       // player already carrying eggs?
-	and #$7f
-	bne l1a20       // yes -> abort
-	lda $0341       // player already carrying wood?
-	and #$80
-	bne l19d8       // yes -> try making a fire here
+	lda $0341       // get player carry status
+	bmi l19b2       // already carrying wood -> try making a fire here
+	and #$7f        // player already carrying eggs?
+	bne l19b1       // yes -> abort
         lda #$00        // remove wood (i.e. draw empty base)
 	sta ($00),y
 	lda #$80        // remember carrying wood
 	sta $0341
         jsr prt_egg_status
-	jmp l1e0d
-
-                        // --- try lighting a fire ---
-l19d8	lda $034d       // fire already burning?
-	beq l1a20       // yes -> abort
-	lda $0346
-	cmp #$20        // blank behind player?
-	bne l1a20       // no -> cannot make fire here
-	ldy #$16        // remove wood (i.e. draw empty base below player)
-        lda #$00
-	sta ($00),y
-	lda #$15        // fire char behind player
-	sta $0346
-	lda #$07        // yellow
-	sta $0340
-	lda #$20        // start fire immunity counter
-	sta $0349
-	lda #$00        // clear carry status
-	sta $0341
-        jsr prt_egg_status
-        lda #<l12e3     // print "FIRE IS ON"
-        sta $10
-        lda #>l12e3
-        sta $11
-        jsr prt_message
-	lda #$00
-	sta $034d       // fire status: burning
-	lda $01         // store address of digit under fire
-	sta $0d
-	lda $00
-	sta $0c
-	ldy #$2c
-	lda #$b9        // print inverted '9' below base below fire
-	sta ($0c),y
-        lda $0c         // calc color address: ($00) + $9400 -$1000
-        sta $10
-        lda $0d
-        clc
-        adc #$94-$10
-        sta $11
-        lda #$07
-	sta ($10),y
-l1a20	jmp l1e0d
+l19b1	jmp l1e0d
+l19b2	jmp l19d8
 
                         // --- F7 to pick up eggs? ---
 l1a61	ldy #$2c
@@ -979,7 +939,6 @@ l1a7f   lda $0341       // already carrying 3 eggs?
         sta $10
 	lda #>l1317
         sta $11
-                        // TODO clear message after timer
         jsr prt_message
 	jmp l1e0d
 l1a80	txa
@@ -1004,8 +963,6 @@ l1b2d	ldy #$16        // read char one row below player
 	lda #>l1316
         sta $11
         jsr prt_message
-	lda #$30        // grant fire immunity
-	sta $0349
 l1b52	jmp l1e0d
 
 l1b55	cmp #$02        // base with stone?
@@ -1043,6 +1000,52 @@ l1af8	dec $0341
         sta ($00),y     // write char below base
 l1af9	jsr prt_egg_status
 	jmp l1e0d
+
+                        // --- try lighting a fire ---
+l19d8	lda $0346
+	cmp #$20        // blank behind player?
+	bne l1a20       // no -> cannot make fire here
+        ldx #$00        // determine index for storing fire address
+        lda $034f       // fire #1 active?
+        beq l19e0
+        lda $034f+2     // fire #2 active?
+        bne l1a20       // two fire already active -> cannot make another fire
+        ldx #$02        // yes -> use fire address #2
+l19e0   ldy #$16        // remove wood (i.e. draw empty base below player)
+        lda #$00
+	sta ($00),y
+	lda #$15        // fire char behind player (to be drawn when player moves)
+	sta $0346
+	lda #$07        // color yellow behind player
+	sta $0340
+	lda #$20        // start fire immunity counter
+	sta $0349
+	lda #$00        // clear carry status
+	sta $0341
+	sta $034d       // fire status: burning
+        lda $00
+	sta $034e,x     // store address of digit under fire
+	sta $10         // copy to ZP for writing through pointer
+	lda $01
+	sta $034f,x
+	sta $11
+	ldy #$2c
+	lda #$b9        // print digit '9' below base below fire (timer display)
+	sta ($10),y
+        lda $11         // calc color address: +$9400 -$1000
+        clc
+        adc #$94-$10
+        sta $11
+        lda #$07
+	sta ($10),y
+        // index X invalid below
+        jsr prt_egg_status  // update display for carry status
+        lda #<l12e3     // print "FIRE IS BURNING"
+        sta $10
+        lda #>l12e3
+        sta $11
+        jsr prt_message
+l1a20	jmp l1e0d
 
 
 // ----------------------------------------------------------------------------
@@ -1277,10 +1280,15 @@ l1e2f	lda $0346
 	jmp post_game   // burnt to death
 
 l1e44	lda $0349       // immunity counter running?
-	beq l1e59
+	beq l1e50
 	dec $0349       // decrement immunity counter
-	bne l1e59
-        jsr clr_message // clear display ("FIRE IS ON" et.al.)
+
+l1e50   lda $0345       // message timer running?
+        beq l1e59
+        dec $0345       // decrement timer
+        cmp #$01
+        bne l1e59
+        jsr clr_message
 
 l1e59	ldx #$08        // rotate home char definition by one bit right: shimmering effect
 l1e5b	lda l1ca0-1,x
@@ -1291,16 +1299,16 @@ l1e64	sta l1ca0-1,x
 	dex
 	bne l1e5b
 
-	lda $034a       // toggle between fire chars
+	lda $034a       // fire char definition: toggling for flickering effect
         and #$01
         bne l1e66
-        ldx #$08
+        ldx #$08        // copy char variant #1
 l1e65   lda l1ca8_0-1,x
         sta l1ca8-1,x
 	dex
 	bne l1e65
 	beq l1e67
-l1e66   ldx #$08
+l1e66   ldx #$08        // copy char variant #2
 l1e68   lda l1ca8_1-1,x
         sta l1ca8-1,x
 	dex
@@ -1309,37 +1317,60 @@ l1e68   lda l1ca8_1-1,x
 l1e67   inc $034a       // increment game loop counter
 	bne l1ef1       // no overflow -> skip periodic action handler
 
-	lda $034d       // fire burning?
+        lda $034d       // fire burning?
 	bne l1ef1
+        ldx #$00        // --- maintain digits under fire ---
+        stx $fb
+l1e70   lda $034e,x     // copy address of fire char to ZP
+        sta $10
+        lda $034f,x     // this fire active?
+        beq l1e71       // no -> skip to next
+        sta $11
 	ldy #$2c
-	lda ($0c),y     // update fire status display: -1
+	lda ($10),y     // update fire status display: -1
 	sec
 	sbc #$01
-	sta ($0c),y
-	cmp #$b1        // '1'?
-	bne l1eb4
-	lda #<l130d     // print "FIRE IS GOING OUT"
+	sta ($10),y
+        cmp $fb         // determine max digit value across both fires
+        bcc l1e72
+        sta $fb
+l1e72   cmp #$b0        // digit now '0'? AKA is fire out?
+        bne l1e71
+        //lda $0346       // fire char behind player?  FIXME compare addresses
+	//cmp #$15
+	//bne l1ec6
+	//lda #$20        // replace player background with blank (i.e. clear fire char)
+	//sta $0346
+	//bne l1ecc
+l1ec6	ldy #$00        // remove fire char
+	lda #$20
+	sta ($10),y
+l1ecc	ldy #$2c        // clear digit below fire
+	sta ($10),y
+        lda #$00
+        sta $034f,x     // invalidate address to mark fire as inactive
+l1e71   inx             // loop across 2 fires
+        inx
+        cpx #$04
+        bcc l1e70
+
+        lda $fb         // check combined fire status
+        cmp #$b1        // '1'?
+	beq l1eb0
+        cmp #$b0        // '0'?
+	beq l1eb4
+	jmp l2100
+
+l1eb0	lda #<l130d     // print "FIRE IS GOING OUT"
         sta $10
 	lda #>l130d
         sta $11
         jsr prt_message
         lda #$20
 	sta $0349
-l1eb1	jmp l2100
-l1eb4	cmp #$b0        // '0'?
-	bne l1eb1
-l1eb8	lda $0346       // fire char behind player?
-	cmp #$15
-	bne l1ec6
-	lda #$20        // replace player background with blank (i.e. clear fire char)
-	sta $0346
-	bne l1ecc
-l1ec6	ldy #$00
-	lda #$20        // clear digit below fire
-	sta ($0c),y
-l1ecc	ldy #$2c
-	sta ($0c),y
-	lda #$01        // new fire status: "make a fire"
+	jmp l2100
+
+l1eb4	lda #$01        // new fire status: "make a fire"
 	sta $034d
 	lda #$fe        // timer for issuing next warning message
 	sta $034c
@@ -1373,7 +1404,7 @@ l1f0d	cmp #$01        // fire status 1? (fire freshly out)
         jsr prt_message
 	lda #$02        // new fire status
 	sta $034d
-	lda #$f0        // counter up to next status message
+	lda #$f0        // counter up to next fire warning
 	sta $034c
 l1f26	lda #$20
 	sta $0349
@@ -1381,9 +1412,9 @@ l1f26	lda #$20
 
 l1f2e	cmp #$02        // fire status 2?
 	bne l1f49
-	lda #<l12ed     // print "DINO MUM COMING"
+	lda #<l12f8     // print "DINO MUM COMING"
         sta $10
-	lda #>l12ed
+	lda #>l12f8
         sta $11
         jsr prt_message
 	lda #$d0
@@ -1399,21 +1430,18 @@ l1f49	cmp #$04        // fire status 4?
 	lda #>l1307
         sta $11
         jsr prt_message
+
 	lda $01         // determine column pos of player
 	sec
 	sbc #$10        // MSB of player offset to screen base address $1000
 	sta $0f
-	lda #$00
-	sta $fa
 	lda $00         // get LSB of player address
 l1f70	sec             // calc Yoff/22 via iteration
-	sbc #$16
-	bcs l1f79
+l1f71	sbc #$16
+	bcs l1f71
 	dec $0f
-	bmi l1f7c
-l1f79	clc
-	bcc l1f70
-l1f7c	clc
+	bpl l1f70
+	clc
 	adc #$16        // undo last subtraction: calc Yoff%22
 	cmp #$0e        // check range, so that dino foot fits on screen (without wrap or cut-off)
 	bcc l1f87
@@ -1436,18 +1464,18 @@ l1f91	sta $0e         // store base address for dino foot
 l1f9c	lda $034d       // attack ongoing?
 	cmp #$10
 	bcc l1fa0
-	jmp l202b       // -> pull up foot
+	jmp l2030       // -> raise foot
 
-l1fa0	lda #$20        // counter for foot lowering (twice speed of player)
+l1fa0	lda #18         // start iteration for foot lowering: MAX to row of lowest base
 	sta $fa
-l1faa	lda #$00        // foot down
-	sta $fb
-	ldy #$09
-l1fb0	lda l1346,y     // foot pattern
+        lda $0e         // backup Yoff of foot (left side)
+        sta $fb
+l1faa	ldy #$09
+l1fb0	lda l1346,y     // foot pattern (lower row, i.e. sole of foot)
 	sta ($0e),y     // foot +1 row
 	dey
 	bpl l1fb0
-l1fb8	lda $0e
+	lda $0e         // advance pointer by one row
 	clc
 	adc #$16
 	bcc l1fc1
@@ -1458,41 +1486,52 @@ l1fc1	sta $0e
 	sec
 	sbc #$02
 	sta $23
-	ldy #$09        // store chars behind by foot
+        lda $0e         // calc color address: +$9400 -$1000
+        sta $10
+        lda $0f
+        clc
+        adc #$94-$10
+        sta $11
+	ldy #$09
 l1fce	lda ($0e),y
-	sta ($22),y
+	sta ($22),y     // backup chars behind by foot to $0800-...
 	cmp #$0c        // stomping onto player figure? (in any shape, i.e. #$0c...#$0f)
 	bcc l1fde
 	cmp #$10
 	bcs l1fde
 	lda #$00        // yes -> player dead
 	sta $01
-l1fde	lda l133c,y     // foot pattern
+l1fde	lda l133c,y     // foot pattern (higher row, i.e. middle part)
 	sta ($0e),y
+        lda #$01        // color: white
+	sta ($10),y
 	dey
 	bpl l1fce
-	ldy #$1f
-l1ff2	lda ($0e),y
-	cmp #$07        // foot over base?
-	bcc l1fff
-	dey
-	cpy #$16        // no base
-	bcs l1ff2
-	bcc l201a
-l1fff	lda $0f
-	cmp $01
-	bcc l200b
-	lda $0e         // foot higher than player
-	cmp $00
-	bcs l2024
-l200b	lda $0f
-	cmp $01
-	bcc l201a
-	lda $00
-	sec
-	sbc $0e
-	cmp #$16        // foot on same base as player
-	bcc l2024
+
+	ldy #$16+09     // loop to check for base char in row below foot
+l1fe0	lda ($0e),y
+	cmp #$07        // base char (range #$00-$06)?
+	bcc l2001       // found base char
+        dey
+        cpy #$09
+        bcs l1fe0
+        bcc l201a       // not found -> continue stomping into next row
+l2001
+        lda $0f         // calc address of start of screen row containing foot sole (i.e. address of Yoff:0)
+        sta $11
+        lda $0e
+        sec
+        sbc $fb
+	bcs l2002
+	dec $11
+l2002	sta $10
+        lda $01         // compare foot row address with player address
+        cmp $11
+        bcc l2024       // MSB player < foot -> end iteration
+        bne l201a       // MSB ">" -> continue
+        lda $00
+        cmp $10
+        bcc l2024       // LSB player < foot -> end iteration
 
 l201a	ldy #$20        // time delay
 l2011	ldx #$ff
@@ -1501,19 +1540,17 @@ l2012	dex
 l2013	dey
 	bne l2011
         dec $fa         // next iteration foot lowering
-	bne l1faa
+        beq l2024
+	jmp l1faa
 
-l2021	jmp l2100
-l2024	lda #$10        // fire status $10
+l2024   lda #$10        // fire status $10
 	sta $034d
-	bne l2021
-        // fall-through
-
-//                      // --- foot raising ---
-l202b	lda $01
-	bne l2030
+	lda $01         // player dead?
+	bne l2030       // no -> raise foot
         lda #$02
 	jmp post_game   // stomped to death
+
+//                      // --- foot raising ---
 l2030	ldy #$09
 	lda $0e
 	sta $22
@@ -1529,33 +1566,29 @@ l2044	lda $0e
 	sec
 	sbc #$16
 	bcs l204d
-l204b	dec $0f         // foot back in first row
+	dec $0f
 l204d	sta $0e
-	lda $0f
+	lda $0f         // foot back in first row?
 	cmp #$10
-	bne l207c
-l2055	lda $0e
+	bne l2030
+	lda $0e
 	cmp #$16
-	bcs l207c
-l205b	jsr $e094       // get RAND number
-	lda $8d
-	ora #$1f
-	sta $034c       // time until next attack
-	lda #$04        // fire status back to 4
-	sta $034d
+	bcs l2030
 	ldx #$16        // clear first row
 	lda #$20
 l206e	sta $1000,x
 	dex
 	bpl l206e
+
+	jsr $e094       // get RAND number
+	lda $8d
+	ora #$1f
+	sta $034c       // time until next attack
+	lda #$04        // fire status back to 4
+	sta $034d
 	lda #$01
 	sta $0349
-	jmp l2100
-l207c	ldy #$09        // clear "attack" display
-l207e	lda l1320+10,y
-	sta ($0e),y
-	dey
-	bpl l207e
+	jsr clr_message
 	jmp l2100
 
 // ----------------------------------------------------------------------------
@@ -1733,7 +1766,9 @@ l2504   lda ($10),y
         iny
         inx
         bne l2504
-l2505   rts
+l2505   lda #$50        // set timer for automatically clearing message
+        sta $0345
+        rts
 
 // ----------------------------------------------------------------------------
 //                      // Sub-function for clearing the status text
