@@ -51,7 +51,7 @@ _start_data = $1240
 
 // variables
 // $00-$01: player address
-// $02-$03: first snake
+// $02-$03: first snake (tail)
 // $04-$05: second snake
 // $06-$07: third snake
 // $08-$09: beam station
@@ -64,7 +64,7 @@ _start_data = $1240
 
 // $0340: saved color below player (companion to $0346)
 // $0341: number of collected eggs; >$7f:wood
-// $0342: counter snakes
+// $0342: counter of fallen height
 // $0343: score BCD, lower nibbles
 // $0344: score BCD, higher nibbles
 // $0345: message clearing counter
@@ -78,6 +78,7 @@ _start_data = $1240
 // $034d: fire status: 0:burning 1:make 2:coming 3:attack 8:stamping
 // $034e-$034f: address digit char under fire #1
 // $0350-$0351: address digit char under fire #2
+// XXX $0342: counter snakes
 // XXX $034e,$0350,$0352: snake: char under tail
 // XXX $034f,$0351,$0353: snake: column; $ff=dead (i.e. distance left border)
 // XXX $0354,$0356,$0358: snake: char under head
@@ -137,38 +138,16 @@ l12da   .byt $20,$97,$8f,$8f,$84,$20    // " WOOD "
 l12de   .byt $85,$87,$87,$20            // "EGG "
 l12df   .byt $85,$87,$87,$93            // "EGGS"
 
-        // zero-terminated message strings
-l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS BURNING"
-        .byt $89,$93,$20
-        .byt $82,$95,$92,$8e,$89,$8e,$87,$00
-l12e4   .byt $86,$89,$92,$85,$20        // "FIRE IS OUT"
-        .byt $89,$93,$20,$8f,$95,$94,$00
-l12ed   .byt $8d,$81,$8b,$85,$20        // "MAKE A FIRE"
-        .byt $81,$20
-        .byt $86,$89,$92,$85,$00
-l12f8   .byt $84,$89,$8e,$8f,$20        // "DINO MUM COMING"
-        .byt $8d,$95,$8d,$20
-        .byt $83,$8f,$8d,$89,$8e,$87,$00
-l1307   .byt $84,$89,$8e,$8f,$20        // "DINO MUM ATTACK"
-        .byt $8d,$95,$8d,$20
-        .byt $81,$94,$94,$81,$83,$8b,$00
-l130d   .byt $86,$89,$92,$85,$20,$89,$93,$20 // "FIRE IS GOING OUT"
-        .byt $87,$8f,$89,$8e,$87,$20
-        .byt $8f,$95,$94,$00
-l1316   .byt $90,$8f,$97,$85,$92,$20    // "POWER GAIN"
-        .byt $87,$81,$89,$8e,$00
-l1317   .byt $94,$8f,$8f,$20            // "TOO HEAVY"
-        .byt $88,$85,$81,$96,$99,$00
-
         // dino mum foot pattern
 l133c   .byt $17,$18,$18,$18,$18,$18,$18,$18,$18,$19 // char codes: foot mid/{left,mid,right}
 l1346   .byt $1a,$1b,$1b,$1b,$1b,$1b,$1b,$1b,$1b,$1c // char codes: foot low/{left,mid,right}
 
 // ----------------------------------------------------------------------------
-// fill up to next segment
+// fill up to next segment (so that program starts on well-defined address)
 .dsb $1400 - *, 0
 * = $1400
 
+//                      // Program start
 l1400	lda #$0e
 	sta $900f
 	lda #$cf        // screen:$1000, color:$9400, user-def:$1C00
@@ -640,7 +619,7 @@ l178e	ldy #$16
 	beq l17c9
 	cmp #$07        // any kind of base?
 	bcc l17c9
-	ldy #$00        /// --- free fall ---
+	ldy #$00        // --- free fall ---
 	jsr undraw_player
 	lda $00         // move player one row down
 	clc
@@ -648,19 +627,20 @@ l178e	ldy #$16
 	bcc l17aa
 	inc $01
 l17aa	sta $00
-	lda $0347       // select new player char depending on current direction
-	bne l17ba
-l17b6	lda #$0c        // standing still
-	bne l17c4
-l17ba	and #$0f
-	bne l17c2
-	lda #$0e        // player facing left
-	bne l17c4
-l17c2	lda #$0f        // player facing right
-l17c4	jsr draw_player
-	jmp l1e0d
+        lda #$10        // char for falling player
+        jsr draw_player
+        inc $0342
+        jmp l1e0d
 
-l17c9   lda $0347
+l17c9   lda $0342
+        cmp #4*2+2      // fallen more than two levels?
+        bcc l17ca
+        lda #$03        // yes -> fallen to death
+	jmp post_game
+l17ca   lda #$00        // clear falling row counter
+        sta $0342
+
+        lda $0347
 	cmp #$10        // player moving left?
 	bne l1807
         //lda $cb
@@ -857,8 +837,9 @@ l197e	ldy #$17        // check if player at home:
 	lda ($08),y
 	cmp #$0c        // player figure (any shape) at home position?
 	bcc l19ae       // no -> abort
-	cmp #$10
+	cmp #$11
 	bcs l19ae
+                        // FIXME must allow 1 or 2 if no eggs left
         lda $0341       // carrying at least 3 eggs?
         and #$7f
         cmp #$03
@@ -930,18 +911,22 @@ l1a75	ldy #$16        // read char 1 row below player
 	cmp #$01        // char for base with egg?
 	bne l1b2d       // no -> no eggs for picking up here
 	ldx #$00        // yes -> change to empty base
-l1a7f   lda $0341       // already carrying 3 eggs?
-	cmp #$03
-	bcc l1a80
+l1a7f   lda $0341
+        bmi l1a80       // carrying wood -> abort
+	cmp #$03        // already carrying 3 eggs?
+	bcc l1a90       // less than 3 -> ok
 	lda $034b       // power gain?
-	bne l1a80
-	lda #<l1317     // no -> print "TOO HEAVY"
+	beq l1a80       // no -> abort
+	lda $0341       // power gain?
+	cmp #$14        // carrying 20 eggs?
+	bcc l1a90       // less than 20 (and power gain) -> ok
+l1a80   lda #<l1317     // no -> print "TOO HEAVY"
         sta $10
 	lda #>l1317
         sta $11
         jsr prt_message
 	jmp l1e0d
-l1a80	txa
+l1a90	txa
         sta ($00),y     // draw char with one egg less
 	inc $0341       // increment player's egg counter
         jsr prt_egg_status
@@ -1070,29 +1055,42 @@ l1c00	.byt $ff,$88,$55,$22,$00,$00,$00,$00    // #$00: Base
 	.byt $41,$7f,$41,$41,$41,$7f,$41,$41    // #$0a: ladder
 	.byt $3e,$36,$36,$3e,$5d,$14,$22,$41    // #$0b: power gain below
 	.byt $1c,$1c,$08,$7f,$49,$dd,$14,$36    // #$0c: player normal
-	.byt $dc,$5c,$49,$7f,$08,$3c,$64,$06    // #$0d: player upwards
-	.byt $1c,$5c,$48,$7e,$0b,$3d,$22,$66    // #$0e: player left
-	.byt $38,$3a,$12,$7e,$d0,$bc,$44,$66    // #$0f: player right
-	.byt $00,$00,$00,$08,$95,$55,$55,$22    // #$10: snake tail (left)
-	.byt $00,$00,$07,$8a,$67,$50,$50,$20    // #$11: snake head (right)
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$12: spider - UNUSED
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$13: dino - UNUSED
+	.byt $dc,$5c,$49,$7f,$08,$3c,$64,$06    // #$0d: player climbing
+	.byt $1c,$5c,$48,$7e,$0b,$3d,$22,$66    // #$0e: player walking left
+	.byt $38,$3a,$12,$7e,$d0,$bc,$44,$66    // #$0f: player walking right
+	.byt $5d,$5d,$49,$7f,$08,$1c,$14,$14    // #$10: player falling
+	.byt $00,$00,$00,$08,$95,$55,$55,$22    // #$11: snake tail (left)
+	.byt $00,$00,$07,$8a,$47,$50,$50,$20    // #$12: snake head (right)
+	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$13: UNUSED
 l1ca0	.byt $aa,$00,$55,$00,$aa,$00,$55,$00    // #$14: home - ROR'ed at run-time
-l1ca8	.byt $00,$00,$00,$00,$00,$00,$00,$7e    // #$15: fire - switched at run-time
-	.byt $00,$00,$00,$00,$1c,$2a,$51,$43    // #$16: stone above w/o base
-	.byt $51,$64,$49,$54,$40,$6a,$54,$41    // #$17: foot mid/left
-	.byt $20,$8a,$40,$09,$a0,$15,$40,$15    // #$18: foot mid/mid
-	.byt $82,$22,$42,$12,$42,$02,$a2,$02    // #$19: foot mid/right
-	.byt $64,$4a,$60,$50,$40,$41,$41,$3e    // #$1a: foot low/left
-	.byt $42,$15,$80,$00,$00,$01,$81,$70    // #$1b: foot low/mid
-	.byt $42,$12,$82,$02,$02,$02,$82,$7c    // #$1c: foot low/right
+l1ca8	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$15: fire - written/toggled at run-time
+	.byt $00,$00,$00,$00,$1c,$2a,$51,$43    // #$16: stone upper half (w/o base)
+	.byt $51,$64,$49,$54,$40,$6a,$54,$41    // #$17: dino foot mid/left
+	.byt $20,$8a,$40,$09,$a0,$15,$40,$15    // #$18: dino foot mid/mid
+	.byt $82,$22,$42,$12,$42,$02,$a2,$02    // #$19: dino foot mid/right
+	.byt $64,$4a,$60,$50,$40,$41,$41,$3e    // #$1a: dino foot low/left
+	.byt $42,$15,$80,$00,$00,$01,$81,$70    // #$1b: dino foot low/mid
+	.byt $42,$12,$82,$02,$02,$02,$82,$7c    // #$1c: dino foot low/right
 	.byt $20,$48,$53,$54,$54,$53,$48,$20    // #$1d: snake egg left
 	.byt $02,$09,$e5,$15,$15,$e5,$09,$02    // #$1e: snake egg right
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1f: unused
+	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1f: UNUSED
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$20: blank
 
-l1ca8_0 .byt $08,$28,$69,$b9,$7f,$3c,$18,$7e    // #$15: fire v1
-l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$15: fire v2
+        .byt $00,$00,$00,$00,$00,$30,$49,$86    // snake v1 tail
+        .byt $00,$00,$00,$70,$70,$80,$00,$00
+        .byt $00,$00,$00,$00,$02,$05,$08,$08    // snake v2 tail
+        .byt $00,$00,$00,$07,$07,$08,$90,$60
+
+// player figure:
+// -climbing-   -falling-
+// xx.xxx..     .x.xxx.x
+// .x.xxx..     .x.xxx.x
+// .x..x..x     .x..x..x
+// .xxxxxxx     .xxxxxxx
+// ....x...     ....x...
+// ..xxxx..     ...xxx..
+// .xx..x..     ...x.x..
+// .....xx.     ...x.x..
 
 // fire v1         v2
 // ....*...        ........
@@ -1103,6 +1101,29 @@ l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$15: fire v2
 // ..****..        ..****..
 // ...**...        ...**...
 // .******.        .******.
+l1ca8_0 .byt $08,$28,$69,$b9,$7f,$3c,$18,$7e    // #$15: fire v1
+l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$15: fire v2
+
+// snake tail+head (original)
+// ................
+// ................
+// .............xxx
+// ....x...x...x.x.
+// x..x.x.x.x...xxx
+// .x.x.x.x.x.x....
+// .x.x.x.x.x.x....
+// ..x...x...x.....
+
+// snake tail+head (v2)  (v1)
+// ........|........     ........|........
+// ........|........     ........|........
+// ........|........     ........|........
+// ........|.....xxx     ........|.xxx....
+// ......x.|.....xxx     ........|.xxx....
+// .....x.x|....x...     ..xx....|x.......
+// ....x...|x..x....     .x..x..x|........
+// ....x...|.xx.....     x....xx.|........
+
 
 // ----------------------------------------------------------------------------
 //                      // Stone fall
@@ -1245,6 +1266,12 @@ l1dec	jmp l1e0d
 
 l1e08	lda #$00        // no player action (i.e. no key/joystick input)
 	sta $0347       // -> clear direction to "not moving"
+        ldy #$00
+	lda ($00),y
+        cmp #$10
+        bne l1e0d
+        lda #$0c        // change player figure from falling to normal
+        sta ($00),y
 
 l1e0d	ldy #$40        // time delay
 l1e0f	ldx #$ff
@@ -1253,7 +1280,33 @@ l1e11	dex
 l1e14	dey
 	bne l1e0f
 
-l1e17	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
+#if 0
+        //lda #$1d
+        //sta $1008
+        //lda #$1e
+        //sta $1009
+        lda $034a
+        lsr
+        and #$0f
+        tax
+        lda #$20
+        sta $1015,x
+        lda $034a
+        and #$01
+        bne l1e16
+        lda #$21
+        sta $1016,x
+        lda #$22
+        sta $1017,x
+        bne l1e17
+l1e16   lda #$23
+        sta $1016,x
+        lda #$24
+        sta $1017,x
+l1e17
+#endif
+
+	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
 	sta $9122
 
 	lda $0348       // player on ladder?
@@ -1497,7 +1550,7 @@ l1fce	lda ($0e),y
 	sta ($22),y     // backup chars behind by foot to $0800-...
 	cmp #$0c        // stomping onto player figure? (in any shape, i.e. #$0c...#$0f)
 	bcc l1fde
-	cmp #$10
+	cmp #$11
 	bcs l1fde
 	lda #$00        // yes -> player dead
 	sta $01
@@ -1742,6 +1795,47 @@ l2301   sta $03de       // BAK:=val%10
 //                      // Sub-function for printing a status message
 //                      // - Parameter: $10-$11: message text address
 
+        // zero-terminated message strings (max 20 chars fit in message box)
+l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS BURNING"
+        .byt $89,$93,$20
+        .byt $82,$95,$92,$8e,$89,$8e,$87,$00
+l12e4   .byt $86,$89,$92,$85,$20        // "FIRE IS OUT"
+        .byt $89,$93,$20,$8f,$95,$94,$00
+l12ed   .byt $8d,$81,$8b,$85,$20        // "MAKE A FIRE"
+        .byt $81,$20
+        .byt $86,$89,$92,$85,$00
+l12f8   .byt $84,$89,$8e,$8f,$20        // "DINO MUM COMING"
+        .byt $8d,$95,$8d,$20
+        .byt $83,$8f,$8d,$89,$8e,$87,$00
+l1307   .byt $84,$89,$8e,$8f,$20        // "DINO MUM ATTACK"
+        .byt $8d,$95,$8d,$20
+        .byt $81,$94,$94,$81,$83,$8b,$00
+l130d   .byt $86,$89,$92,$85,$20,$89,$93,$20 // "FIRE IS GOING OUT"
+        .byt $87,$8f,$89,$8e,$87,$20
+        .byt $8f,$95,$94,$00
+l1316   .byt $90,$8f,$97,$85,$92,$20    // "POWER GAIN"
+        .byt $87,$81,$89,$8e,$00
+l1317   .byt $85,$87,$87,$93,$20        // "EGGS TOO HEAVY"
+        .byt $94,$8f,$8f,$20
+        .byt $88,$85,$81,$96,$99,$00
+
+
+l1322   .byt $83,$8f,$8e,$87,$92,$81,$94,$95    // "CONGRATULATIONS"
+        .byt $8c,$81,$94,$89,$8f,$8e,$93,$00
+l1320   .byt $82,$95,$92,$8e,$94,$20    // "BURNT TO DEATH"
+        .byt $94,$8f,$20
+        .byt $84,$85,$81,$94,$88,$00
+l1321   .byt $93,$94,$8f,$8d,$90,$85,$84,$20    // "STOMPED TO DEATH"
+        .byt $94,$8f,$20
+        .byt $84,$85,$81,$94,$88,$00
+l1324   .byt $86,$81,$8c,$8c,$85,$8e,$20    // "FALLEN TO DEATH"
+        .byt $94,$8f,$20
+        .byt $84,$85,$81,$94,$88,$00
+l1323   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
+        .byt $81,$87,$81,$89,$8e,$20
+        .byt $a8,$99,$af,$8e,$a9,$00
+
+
 prt_message
         ldx #22-2       // clear content
         lda #$20
@@ -1781,19 +1875,27 @@ l2510   lda l126e-1,x
 	bne l2510
         rts
 
-// ----------------------------------------------------------------------------
 
-l1320   .byt $82,$95,$92,$8e,$94,$20    // "BURNT TO DEATH"
-        .byt $94,$8f,$20
-        .byt $84,$85,$81,$94,$88,$00
-l1321   .byt $93,$94,$8f,$8d,$90,$85,$84,$20    // "STOMPED TO DEATH"
-        .byt $94,$8f,$20
-        .byt $84,$85,$81,$94,$88,$00
-l1322   .byt $83,$8f,$8e,$87,$92,$81,$94,$95    // "CONGRATULATIONS"
-        .byt $8c,$81,$94,$89,$8f,$8e,$93,$00
-l1323   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
-        .byt $81,$87,$81,$89,$8e,$20
-        .byt $a8,$99,$af,$8e,$a9,$00
+#if 0
+clr_screen_color
+        lda #<$9400+19*22-1
+        sta $00
+        lda #>$9400+19*22-1
+        sta $01
+        ldy #$00
+l2520   lda #$01        // color: white
+l2521   sta ($00),y
+        dec $00
+        bne l2521
+        sta ($00),y
+        dec $00
+        dec $01
+        lda $01
+        cmp #$94
+        bcs l2520
+#endif
+
+// ----------------------------------------------------------------------------
 
 post_game
         cmp #$01        // check reason for game end
@@ -1814,7 +1916,16 @@ l2401   cmp #$02
         jsr prt_message
         clc
         bcc l2403
-l2402   lda #<l1322     // print "CONGRATULATIONS"
+l2402   cmp #$03
+        bne l2405
+        lda #<l1324     // print "FALLEN TO DEATH"
+        sta $10
+        lda #>l1324
+        sta $11
+        jsr prt_message
+        clc
+        bcc l2403
+l2405   lda #<l1322     // print "CONGRATULATIONS"
         sta $10
         lda #>l1322
         sta $11
