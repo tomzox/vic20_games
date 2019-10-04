@@ -51,9 +51,9 @@ _start_data = $1240
 
 // variables
 // $00-$01: player address
-// $02-$03: first snake (tail)
-// $04-$05: second snake
-// $06-$07: third snake
+// $02-$03: snake address (left/tail), temp copy of $0358-$0359
+// $04-$05: -unused-
+// $06-$07: -unused-
 // $08-$09: beam station
 // $0a-$0b: stone
 // $0c-$0d: -unused-
@@ -78,11 +78,13 @@ _start_data = $1240
 // $034d: fire status: 0:burning 1:make 2:coming 3:attack 8:stamping
 // $034e-$034f: address digit char under fire #1
 // $0350-$0351: address digit char under fire #2
-// XXX $0342: counter snakes
-// XXX $034e,$0350,$0352: snake: char under tail
-// XXX $034f,$0351,$0353: snake: column; $ff=dead (i.e. distance left border)
-// XXX $0354,$0356,$0358: snake: char under head
-// XXX $0355,$0357,$0359: snake egg delay until bursting
+
+// $0352: snake status: 0=inactive; 1=coiled up; 2,3=moving v1,v2
+// $0353: snake Y offset
+// $0358,$0359: snake address
+// $035e,$035f: snake char under tail,head / timer until uncoiling LSB/MSB
+// $0364,$0365: snake color under tail,head
+
 // $0384...$03dd: egg directory (for 4 bases, len=$16 each (see l1250)) bitmask:
 //                mask $1f: egg count
 //                mask $10: stone
@@ -301,7 +303,7 @@ l14f6	tya
 	bcs l1511
 l150e	jmp l13cf
 
-l1511	ldx #$06        // --- egg directory ---
+l1511	ldx #$06        // --- populate egg directory ---
 l1513	lda $02,x
 	sta $fa
 	lda $03,x
@@ -451,8 +453,8 @@ l1625	lda l1258-1,x
 	dex
 	bne l1625
 
-	ldx #$0359-$0340+1  // initialize status variables
-	lda #$00
+	ldx #$0363-$0340+1  // initialize status variables
+	lda #$00        // preset all variables to zero
 l1638	sta $0340,x
 	dex
 	bpl l1638
@@ -468,27 +470,22 @@ l1638	sta $0340,x
 	sta $034f
 	sta $034f+2
 
-#if 0
-	ldx #$06        // initialize snake addresses: first column in each level
-l164f	lda l1240+1,x
-	sta $01,x
-	lda l1240,x
+	ldx #$04        // initialize snake addresses
+l164f   lda l1240+2,x   // base address
 	sec
-	sbc #$16        // NOTE underflow does not happen for current level base addresses (unsafe)
-	sta $00,x
+	sbc #$16        // subtract one row
+	sta $0358,x
+        lda l1240+2+1,x
+        sbc #$00
+        sta $0359,x
 	dex
 	dex
-	bne l164f
+	bpl l164f
 
-	ldx #$04        // initialize snake status
-l1662	lda #$a0
-	sta $0355,x     // snake egg delay until bursting
-	lda #$ff
-	sta $034f,x     // snake dead (i.e. past right screen border)
-	dex
-	dex
-	bpl l1662
-#endif
+        // TODO temporary
+        lda #$00        // Yoff:=0
+        ldx #$00        // snake index
+        jsr spawn_snake
 
 // ----------------------------------------------------------------------------
 //                      // Place player home randomly
@@ -539,7 +536,7 @@ l16b7	lda $fa
 	lda #$0c        // code for normal player" figure
 	jsr draw_player
 	ldy #$00
-	lda #$14        // draw home
+	lda #$1d        // draw home
 	sta ($08),y
 	iny
 	sta ($08),y
@@ -595,6 +592,7 @@ l1745	lda $0347       // --- start jump to the right ---
 	and #$0e
 	beq l1786
 	jsr undraw_player
+                        // FIXME need to catch wrap at right border for row decrement
 	inc $00         // player pos one to the right
 	bne l175e
 	inc $01
@@ -619,7 +617,12 @@ l178e	ldy #$16
 	beq l17c9
 	cmp #$07        // any kind of base?
 	bcc l17c9
-	ldy #$00        // --- free fall ---
+        cmp #$11        // any part of a snake?
+        bcc l1790
+        cmp #$15+1
+        bcs l1790
+        jsr stomp_snake
+l1790   ldy #$00        // --- free fall ---
 	jsr undraw_player
 	lda $00         // move player one row down
 	clc
@@ -685,7 +688,7 @@ l1814	lda $911f       // joystick fire button?
 l1827   jsr undraw_player  // --- trigger jump to right ---
 	lda $00         // moving one row up and one to the right
 	sec
-	sbc #$15
+	sbc #$16-1
 	bcs l183c
 	dec $01
 l183c	sta $00
@@ -999,7 +1002,7 @@ l19d8	lda $0346
 l19e0   ldy #$16        // remove wood (i.e. draw empty base below player)
         lda #$00
 	sta ($00),y
-	lda #$15        // fire char behind player (to be drawn when player moves)
+	lda #$1e        // fire char behind player (to be drawn when player moves)
 	sta $0346
 	lda #$07        // color yellow behind player
 	sta $0340
@@ -1059,11 +1062,11 @@ l1c00	.byt $ff,$88,$55,$22,$00,$00,$00,$00    // #$00: Base
 	.byt $1c,$5c,$48,$7e,$0b,$3d,$22,$66    // #$0e: player walking left
 	.byt $38,$3a,$12,$7e,$d0,$bc,$44,$66    // #$0f: player walking right
 	.byt $5d,$5d,$49,$7f,$08,$1c,$14,$14    // #$10: player falling
-	.byt $00,$00,$00,$08,$95,$55,$55,$22    // #$11: snake tail (left)
-	.byt $00,$00,$07,$8a,$47,$50,$50,$20    // #$12: snake head (right)
-	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$13: UNUSED
-l1ca0	.byt $aa,$00,$55,$00,$aa,$00,$55,$00    // #$14: home - ROR'ed at run-time
-l1ca8	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$15: fire - written/toggled at run-time
+	.byt $07,$07,$04,$78,$80,$7e,$01,$fe    // #$11: snake coiled up
+        .byt $00,$00,$00,$00,$00,$30,$49,$86    // #$12: snake v1 tail (left)
+        .byt $00,$00,$00,$70,$70,$80,$00,$00    // #$13: snake v1 head (right)
+        .byt $00,$00,$00,$00,$02,$05,$08,$08    // #$14: snake v2 tail (left)
+        .byt $00,$00,$00,$07,$07,$08,$90,$60    // #$15: snake v2 head (right)
 	.byt $00,$00,$00,$00,$1c,$2a,$51,$43    // #$16: stone upper half (w/o base)
 	.byt $51,$64,$49,$54,$40,$6a,$54,$41    // #$17: dino foot mid/left
 	.byt $20,$8a,$40,$09,$a0,$15,$40,$15    // #$18: dino foot mid/mid
@@ -1071,15 +1074,10 @@ l1ca8	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$15: fire - written/toggled at
 	.byt $64,$4a,$60,$50,$40,$41,$41,$3e    // #$1a: dino foot low/left
 	.byt $42,$15,$80,$00,$00,$01,$81,$70    // #$1b: dino foot low/mid
 	.byt $42,$12,$82,$02,$02,$02,$82,$7c    // #$1c: dino foot low/right
-	.byt $20,$48,$53,$54,$54,$53,$48,$20    // #$1d: snake egg left
-	.byt $02,$09,$e5,$15,$15,$e5,$09,$02    // #$1e: snake egg right
+l1ce8	.byt $aa,$00,$55,$00,$aa,$00,$55,$00    // #$1d: home - ROR'ed at run-time
+l1cf0	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1e: fire - written/toggled at run-time
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1f: UNUSED
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$20: blank
-
-        .byt $00,$00,$00,$00,$00,$30,$49,$86    // snake v1 tail
-        .byt $00,$00,$00,$70,$70,$80,$00,$00
-        .byt $00,$00,$00,$00,$02,$05,$08,$08    // snake v2 tail
-        .byt $00,$00,$00,$07,$07,$08,$90,$60
 
 // player figure:
 // -climbing-   -falling-
@@ -1101,37 +1099,31 @@ l1ca8	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$15: fire - written/toggled at
 // ..****..        ..****..
 // ...**...        ...**...
 // .******.        .******.
-l1ca8_0 .byt $08,$28,$69,$b9,$7f,$3c,$18,$7e    // #$15: fire v1
-l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$15: fire v2
-
-// snake tail+head (original)
-// ................
-// ................
-// .............xxx
-// ....x...x...x.x.
-// x..x.x.x.x...xxx
-// .x.x.x.x.x.x....
-// .x.x.x.x.x.x....
-// ..x...x...x.....
+l1ca8_0 .byt $08,$28,$69,$b9,$7f,$3c,$18,$7e    // #$1e: fire v1
+l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$1e: fire v2
 
 // snake tail+head (v2)  (v1)
-// ........|........     ........|........
-// ........|........     ........|........
-// ........|........     ........|........
-// ........|.....xxx     ........|.xxx....
-// ......x.|.....xxx     ........|.xxx....
-// .....x.x|....x...     ..xx....|x.......
-// ....x...|x..x....     .x..x..x|........
-// ....x...|.xx.....     x....xx.|........
+// ........|........     ........|........      .....xxx
+// ........|........     ........|........      .....xxx
+// ........|........     ........|........      .....x..
+// ........|.....xxx     ........|.xxx....      .xxxx...
+// ......x.|.....xxx     ........|.xxx....      x.......
+// .....x.x|....x...     ..xx....|x.......      .xxxxxx.
+// ....x...|x..x....     .x..x..x|........      .......x
+// ....x...|.xx.....     x....xx.|........      xxxxxxx.
 
 
 // ----------------------------------------------------------------------------
 //                      // Stone fall
 
+// FIXME falling is done within "busy loop", but
+//       should be async to allow concurrent player & snake movement
+
 l1d08	lda $00         // determine which base/level player is on
 	sta $0a
 	lda $01
 	sta $0b
+                        // TODO move this to subfunction get_base_idx_and_yoff
 l1d10	ldx #$06
 l1d12	lda l1240+3,x
 	cmp $0b
@@ -1144,7 +1136,8 @@ l1d12	lda l1240+3,x
 l1d23	dex
 	dex
 	bpl l1d12
-l1d27	sta $fa         //  pos in level equiv. pos. in egg register
+
+l1d27	sta $fa         //  pos in level equiv. pos. in egg directory
 	lda l1250,x
 	sta $fb
 	lda l1250+1,x
@@ -1154,7 +1147,7 @@ l1d27	sta $fa         //  pos in level equiv. pos. in egg register
 	sbc $fa
 	tay
 	sty $fa
-	lda ($fb),y     // query egg directory for this position
+	lda ($fb),y     // query egg directory for content previously hidden by stone
         cmp #$40
         bcc l1d40
 	lda #$04        // char for base with power-gain
@@ -1169,6 +1162,7 @@ l1d47	cmp #$01
 	lda #$01        // char for base with egg
 l1d4d	ldy #$16
 	sta ($0a),y     // draw new base char
+                        // TODO color
 	ldy #$2c        // offset to row below base
 	lda #$16        // char for upper half of stone without base
 	sta ($0a),y
@@ -1183,11 +1177,11 @@ l1d63	ldy #$30        // time delay
 l1d65	ldx #$ff
 l1d67	dex
 	bne l1d67
-l1d6a	dey
+        dey
 	bne l1d65
 
 	ldy $fa
-	lda ($fb),y     // query egg register again
+	lda ($fb),y     // query egg directory again
 	cmp #$40        // power gain?
         bcc l1d70
         lda #$0b        // char for lower half of power gain
@@ -1209,35 +1203,44 @@ l1d7d	ldy #$2c        // stone address + 2 rows
 l1d8a	sta $0a
 l1d8c	ldy #$00        // start loop
 	lda ($0a),y     // read char below new base
-	cmp #$09        // lower half of stone?
+	cmp #$09        // is lower half of stone?
 	beq l1dac
 	cmp #$20
 	beq l1dac
-	cmp #$15        // fire hit by stone?
-	bne l1dd8
-	tya             // yes -> nearly extinguish fire
-	clc
-	adc #$2c
-	tay
+        cmp #$11        // is any part of a snake?
+        bcc l1d90
+        cmp #$15+1
+        bcs l1d90
+        jsr stomp_snake  // yes -> kill and undraw snake
+        ldy #$00
+        beq l1dac       // continue stone-fall in former pos of snake
+
+l1d90   cmp #$1e        // is fire hit by stone?
+	bne l1dd8       // none of the above -> stop stone fall
+	ldy #$2c        // yes -> nearly extinguish fire
 	lda #$b2        // set fire counter to '2'
 	sta ($0a),y
-	lda #$ff        // make fire counter decement immediately
+	lda #$ff        // manipulate timer to make fire counter decrement immediately (FIXME)
 	sta $034a
-	bne l1dd8       // end stone fall
-l1dac	lda #$16        // upper half of stone
+        ldy #$00
+	beq l1dd8       // end stone fall
+
+l1dac	lda #$16        // draw upper half of stone
 	sta ($0a),y
 	ldy #$16
 	lda ($0a),y
-	cmp #$20
+	cmp #$20        // still blank one row below?
 	bne l1dbc
-l1db8	lda #$09        // lower half of stone
+	lda #$09        // yes -> draw lower half of stone
 	sta ($0a),y
+
 l1dbc	ldy #$50        // time delay
 l1dbe	ldx #$ff
 l1dc0	dex
 	bne l1dc0
-l1dc3	dey
+	dey
 	bne l1dbe
+
 	lda #$20        // remove upper half of stone
 	sta ($0a),y
 	lda $0a         // move stone pointer one row down
@@ -1247,10 +1250,11 @@ l1dc3	dey
 	inc $0b
 l1dd3	sta $0a
 	clc
-	bcc l1d8c       // loop while stone falling
+	bcc l1d8c       // continue loop (falling stone)
 
+        // TODO randomly span snake on this level (if spot is blank)
 l1dd8	lda ($0a),y
-	cmp #$02        // base with stone?
+	cmp #$02        // stone hit base with stone?
 	bne l1dec
 l1dde	lda $0a         // yes -> new stone fall in lower level
 	sec
@@ -1280,32 +1284,6 @@ l1e11	dex
 l1e14	dey
 	bne l1e0f
 
-#if 0
-        //lda #$1d
-        //sta $1008
-        //lda #$1e
-        //sta $1009
-        lda $034a
-        lsr
-        and #$0f
-        tax
-        lda #$20
-        sta $1015,x
-        lda $034a
-        and #$01
-        bne l1e16
-        lda #$21
-        sta $1016,x
-        lda #$22
-        sta $1017,x
-        bne l1e17
-l1e16   lda #$23
-        sta $1016,x
-        lda #$24
-        sta $1017,x
-l1e17
-#endif
-
 	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
 	sta $9122
 
@@ -1320,21 +1298,27 @@ l1e17
         ldy #$00
 	sta ($00),y
 
-l1e2f	lda $0346
-	cmp #$15        // player standing in fire?
+l1e2f   lda $0349       // immunity counter running?
+	beq l1e30
+	dec $0349       // decrement immunity counter
+
+l1e30   lda $0346
+	cmp #$1e        // player standing in fire?
 	bne l1e44
 	lda $0349       // fire immunity timer still running?
-	bne l1e44
+	bne l1e50
 	ldy #$2c        // immunity timeout
 	lda ($00),y
 	cmp #$b2        // '2'
-	bcc l1e44
+	bcc l1e50
         lda #$01
 	jmp post_game   // burnt to death
-
-l1e44	lda $0349       // immunity counter running?
-	beq l1e50
-	dec $0349       // decrement immunity counter
+l1e44   cmp #$13        // player moved into snake head?
+        beq l1e45
+        cmp #$15
+        bne l1e50
+l1e45   lda #$04
+	jmp post_game   // death by snake bite
 
 l1e50   lda $0345       // message timer running?
         beq l1e59
@@ -1344,11 +1328,11 @@ l1e50   lda $0345       // message timer running?
         jsr clr_message
 
 l1e59	ldx #$08        // rotate home char definition by one bit right: shimmering effect
-l1e5b	lda l1ca0-1,x
+l1e5b	lda l1ce8-1,x
 	lsr
 	bcc l1e64
 	ora #$80
-l1e64	sta l1ca0-1,x
+l1e64	sta l1ce8-1,x
 	dex
 	bne l1e5b
 
@@ -1357,13 +1341,13 @@ l1e64	sta l1ca0-1,x
         bne l1e66
         ldx #$08        // copy char variant #1
 l1e65   lda l1ca8_0-1,x
-        sta l1ca8-1,x
+        sta l1cf0-1,x
 	dex
 	bne l1e65
 	beq l1e67
 l1e66   ldx #$08        // copy char variant #2
 l1e68   lda l1ca8_1-1,x
-        sta l1ca8-1,x
+        sta l1cf0-1,x
 	dex
 	bne l1e68
 
@@ -1390,7 +1374,7 @@ l1e70   lda $034e,x     // copy address of fire char to ZP
 l1e72   cmp #$b0        // digit now '0'? AKA is fire out?
         bne l1e71
         //lda $0346       // fire char behind player?  FIXME compare addresses
-	//cmp #$15
+	//cmp #$1e
 	//bne l1ec6
 	//lda #$20        // replace player background with blank (i.e. clear fire char)
 	//sta $0346
@@ -1635,7 +1619,7 @@ l206e	sta $1000,x
 
 	jsr $e094       // get RAND number
 	lda $8d
-	ora #$1f
+	ora #$1f        // OR lower bits to ensure minimum time delay 31
 	sta $034c       // time until next attack
 	lda #$04        // fire status back to 4
 	sta $034d
@@ -1649,7 +1633,222 @@ l206e	sta $1000,x
 .dsb $2100 - *, $ea
 * = $2100
 
-l2100	jmp l1700
+// $0352: snake status: 0=inactive; 1=coiled up; 2,3=moving v1,v2
+// $0353: snake Y offset
+// $0358,$0359: snake address
+// $035e,$035f: snake char under tail,head / timer until uncoiling LSB/MSB
+
+
+l2100
+#if 0
+        //XXX DEBUG
+        lda $0352
+        clc
+        adc #$81
+        sta $1002
+        lda $0353
+        clc
+        adc #$81
+        sta $1003
+        lda $035f
+        clc
+        adc #$81
+        sta $1004
+        lda $035e
+        sta $1005
+        lda $035f
+        sta $1006
+        //XXX DEBUG
+#endif
+
+	ldx #$04        // iterate across snakes: X:=4->2->0
+        stx $fa         // backup iteration index
+l2101   lda $0358,x     // copy snake (base) address to $02-$03
+        sta $02
+        sta $10
+        lda $0359,x
+        sta $03
+        clc             // calc color (base) address $10-$11
+        adc #$84
+        sta $11
+        lda $0352,x
+        bne l2107
+l2108   jmp l2102       // inactive state -> skip this snake
+
+l2107   cmp #$01        // in coiled up state?
+        bne l2105
+//                      // ---- coiled-up state ----
+        dec $035f,x     // decrement timer
+        bne l2108       // not zero -> no further action
+        ldy $0353,x
+        // TODO check char under coiled snake: dead if player figure
+        // TODO (OR: player die even from coiled snake? if yes delete player check below)
+        cpy #$16-1      // at right-most border?
+        bcc l2104
+        lda $035e,x     // yes -> restore char under snake
+        sta ($02),y
+        lda $0364,x
+        sta ($10),y
+        lda #$00        // move to Yoff := 0
+        tay
+        sta $0353,x     // store new Yoff
+        lda ($02),y     // backup char under new Yoff
+	cmp #$0c        // player figure next to coiled snake? (in any shape, i.e. #$0c...#$0f)
+	bcc l210a
+	cmp #$11
+	bcc l2112
+l210a   sta $035e,x     // (NOTE $035f initialized below)
+        lda ($10),y
+        sta $0364,x
+        clc
+        bcc l2104
+
+l2105   cmp #$02        // ---- moving v1: by one col ----
+        bne l2106
+        ldy $0353,x
+        lda $035e,x     // delete snake tail from old position
+        sta ($02),y
+        lda $0364,x     // restore background color
+        sta ($10),y
+        iny
+        lda $035f,x     // move head background to tail background
+        sta $035e,x
+        lda $0365,x
+        sta $0364,x
+        cpy #$16-1      // snake tail reached right-most column?
+        bcs l2110       // -> coil up
+        tya
+        sta $0353,x     // store new Yoff
+l2104
+        lda #$12        // char for snake tail (v1)
+        sta ($02),y     // draw snake tail at new pos (former head pos)
+        iny
+        lda ($02),y     // read background char at snake head
+	cmp #$0c        // reaching player figure? (in any shape, i.e. #$0c...#$0f)
+	bcc l2109
+	cmp #$11
+	bcc l2112
+l2109   cmp #$1e        // reached burning fire?
+        beq l2111       // yes -> coil up to left of fire
+        sta $035f,x     // no -> new pos OK, store bg char
+        lda ($10),y
+        sta $0365,x
+        lda #$13        // char for snake head (v1)
+        sta ($02),y
+        lda #$04
+        sta ($10),y
+        lda #$03        // toggle to moving state v2
+        sta $0352,x
+        bne l2102
+
+l2112   lda #$04        // player bitten by snake
+        // TODO draw coiled snake next to player
+        jmp post_game
+
+l2111   dey
+l2110                   // ---- coiling up again ----
+        lda #$11        // char for coiled up snake
+        sta ($02),y
+        lda #$01        // set state to coiled-up
+        sta $0352,x
+        tya
+        sta $0353,x     // store Yoff
+        lda #$40        // timer until uncoiling (constant)
+        sta $035f,x
+        clc
+        bcc l2102
+
+l2106   cmp #$03
+        bne l2102
+        ldy $0353,x     // ---- moving v2: by half col ----
+        lda #$02
+        sta $0352,x     // toggle back to moving state v1
+        lda #$14        // char for snake tail v2
+        sta ($02),y
+        iny
+        lda #$15        // char for snake head v2
+        sta ($02),y
+        // fall-through
+
+l2102   dex
+        dex
+        bmi l2103
+        jmp l2101
+
+l2103	jmp l1700
+
+//                      // Parameter: A:=Yoff (col index in row above base)
+//                      //            X:=snake index
+spawn_snake
+        sta $0353,x
+        lda #$01        // set snake state to coiled-up
+        sta $0352,x
+        lda $0358,x
+        sta $02
+        lda $0359,x
+        sta $03
+        ldy $0353,x
+        lda ($02),y     // backup char under snake
+        sta $035e,x
+        lda #$11        // char for coiled-up snake
+        sta ($02),y
+        lda $03         // calc color address
+        clc
+        adc #$84
+        sta $03
+        lda ($02),y     // backup color under snake
+        sta $0364,x
+        lda #$04
+        sta ($02),y
+        txa
+        pha
+        jsr $e094       // get RAND number
+        pla
+        tax
+	lda $8d         // set timer until uncoiling
+        and #$3f
+        adc #$10
+        sta $035f,x
+        rts
+
+stomp_snake
+        // TODO determine index; note source can be player $00 or stonefall $0a
+        ldx #$00
+        lda $0352,x
+        beq l2601
+
+        lda $0358,x     // copy snake (base) address to $02-$03
+        sta $02
+        sta $10
+        lda $0359,x
+        sta $03
+        clc             // calc color (base) address $10-$11
+        adc #$84
+        sta $11
+
+        ldy $0353,x
+        lda $035e,x     // undraw snake
+        sta ($02),y
+        lda $0364,x
+        sta ($10),y
+        lda $0352,x
+        cmp #$01        // in coiled-up state?
+        beq l2602       // yes -> undraw single char only
+        iny             // next col (note snake never crosses screen border)
+        lda $035f,x
+        sta ($02),y
+        lda $0365,x
+        sta ($10),y
+l2602   lda #$00        // set state to inactive
+        sta $0352,x
+
+	lda #<l1318     // print "STOMPED A SNAKE"
+        sta $10
+	lda #>l1318
+        sta $11
+        jmp prt_message
+        // rts in sub-routine
+l2601   rts
 
 // ----------------------------------------------------------------------------
 //                      // Sub-function for updating "carrying" status
@@ -1818,23 +2017,34 @@ l1316   .byt $90,$8f,$97,$85,$92,$20    // "POWER GAIN"
 l1317   .byt $85,$87,$87,$93,$20        // "EGGS TOO HEAVY"
         .byt $94,$8f,$8f,$20
         .byt $88,$85,$81,$96,$99,$00
+l1318   .byt $93,$94,$8f,$8d,$90,$85,$84,$20        // "STOMPED A SNAKE"
+        .byt $81,$20,$93,$8e,$81,$8b,$85,$00
 
 
-l1322   .byt $83,$8f,$8e,$87,$92,$81,$94,$95    // "CONGRATULATIONS"
+l1320   .byt $83,$8f,$8e,$87,$92,$81,$94,$95    // "CONGRATULATIONS"
         .byt $8c,$81,$94,$89,$8f,$8e,$93,$00
-l1320   .byt $82,$95,$92,$8e,$94,$20    // "BURNT TO DEATH"
+l1321   .byt $82,$95,$92,$8e,$94,$20    // "BURNT TO DEATH"
         .byt $94,$8f,$20
         .byt $84,$85,$81,$94,$88,$00
-l1321   .byt $93,$94,$8f,$8d,$90,$85,$84,$20    // "STOMPED TO DEATH"
+l1322   .byt $93,$94,$8f,$8d,$90,$85,$84,$20    // "STOMPED BY DINO"
+        .byt $82,$99,$20
+        .byt $84,$89,$8e,$8f,$00
+l1323   .byt $86,$81,$8c,$8c,$85,$8e,$20    // "FALLEN TO DEATH"
         .byt $94,$8f,$20
         .byt $84,$85,$81,$94,$88,$00
-l1324   .byt $86,$81,$8c,$8c,$85,$8e,$20    // "FALLEN TO DEATH"
-        .byt $94,$8f,$20
-        .byt $84,$85,$81,$94,$88,$00
-l1323   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
+l1324   .byt $84,$89,$85,$84,$20            // "DIED FROM SNAKE BITE"
+        .byt $86,$92,$8f,$8d,$20
+        .byt $93,$8e,$81,$8b,$85,$20
+        .byt $82,$89,$94,$85,$00
+l1330   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
         .byt $81,$87,$81,$89,$8e,$20
         .byt $a8,$99,$af,$8e,$a9,$00
 
+l132l   .word l1320
+        .word l1321
+        .word l1322
+        .word l1323
+        .word l1324
 
 prt_message
         ldx #22-2       // clear content
@@ -1896,49 +2106,25 @@ l2521   sta ($00),y
 #endif
 
 // ----------------------------------------------------------------------------
-
+//                      // Sub-function upon death or game win
+//                      // Parameter: A = cause
 post_game
-        cmp #$01        // check reason for game end
-        bne l2401
-        lda #<l1320     // print "BURNT TO DEATH"
+        asl
+        tax
+        lda l132l,x
         sta $10
-        lda #>l1320
-        sta $11
-        jsr prt_message
-        clc
-        bcc l2403
-l2401   cmp #$02
-        bne l2402
-        lda #<l1321     // print "STOMPED TO DEATH"
-        sta $10
-        lda #>l1321
-        sta $11
-        jsr prt_message
-        clc
-        bcc l2403
-l2402   cmp #$03
-        bne l2405
-        lda #<l1324     // print "FALLEN TO DEATH"
-        sta $10
-        lda #>l1324
-        sta $11
-        jsr prt_message
-        clc
-        bcc l2403
-l2405   lda #<l1322     // print "CONGRATULATIONS"
-        sta $10
-        lda #>l1322
+        lda l132l+1,x
         sta $11
         jsr prt_message
 
-l2403   ldx #3*22       // overwrite status boxes with another message box
+        ldx #3*22       // overwrite status boxes with another message box
 l2404	lda l1258-1,x
 	sta $11a2+3*22-1,x
 	dex
 	bne l2404
 
         ldx #$0f
-l2408	lda l1323-1,x   // print "TRY AGAIN?"
+l2408	lda l1330-1,x   // print "TRY AGAIN?"
 	sta $11a2+4*22+3,x
 	dex
 	bne l2408
