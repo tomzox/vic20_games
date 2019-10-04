@@ -3,14 +3,14 @@
 In this repsitory you'll find some games I wrote between 1982 and 1984 for the
 VIC-20. At that time I was 15, so the purpose was mainly for fun and learning.
 
-The games were written originally directly in machine language in memory, using
-a self-developed disassembler (use of an assembler was not possible due to
-memory constraints). This means in particular the code was not relocatable,
-but instead all variable and jump addresses were hard-coded. I also had
-calculate all the branch offsets manually, and re-calculate when inserting
-code. I achieved this by maintaining a copy of the code on paper, and cutting
-the paper using a scissor when inserting code. On paper I also could maintain
-comments to the code.
+The games were written originally directly in 6502 machine language in memory,
+using a self-developed disassembler (use of an assembler was not possible due
+to memory constraints). This means in particular the code was not relocatable,
+so all variable and jump addresses were hard-coded. I had calculate all the
+branch offsets manually, and re-calculate when inserting code. I achieved this
+by maintaining a copy of the code on paper, and cutting the paper with a
+scissor when inserting code. On paper I also could maintain comments to the
+code.
 
 The code you find here is typed in newly using the hex dump also contained on
 these paper trails. Afterward I ran the image through the "dxa" disassembler
@@ -34,11 +34,12 @@ to be kindled by wood to be found in the cave. All the while the player
 has to watch out for snakes crawling across the levels, or hidden in
 the ground beneath stones.
 
-I didn't completely finish this game. There's no sound and I had additional
-plans for spiders crawling on the ceiling of the cave and occasionally lowering
-themselves.  Currently the top layer is empty and unused though. Also the
-implementation of the snakes somehow got lost (except for the jump to the
-start of that code); I have now re-implemented it as I remember it.
+I didn't completely finish this game. I still have sketches showing I had
+planned for spiders crawling on the ceiling of the cave and occasionally
+lowering themselves (this explains the empty space at the top of the current
+game); also there's no sound yet. The code implementing the snakes somehow got
+lost (except for the jump to the start of that code), so that I had to
+re-implement it as I remember it.
 
 ## Snakes game
 
@@ -57,19 +58,19 @@ up with a game objective built around those cool snakes.
 
 <IMG ALIGN="center" SRC="images/10_miles_snap.png" ALT="Screenshot 10-Miles-Runner game">
 
-This is likely one of the first machine language programs I wrote. It's a very
-much simplified variant of the Space Invaders theme. In this game, an alien
-space ship is just toggling from left to right side at the top of the screen,
-firing at the player at the bottom of the screen. With each iteration, the ship
-is coming closer to the player. The player has evade the ship's fire by moving
-left or right, and try hitting the ship with his own missiles before the ship
-reaches him at the bottom.
+This is likely one of the first machine language programs I wrote. It's an
+extremely simplified variant of the Space Invaders theme. In this game, an
+alien space ship (symbol) is just toggling from left to right side at the top
+of the screen, firing at the player at the bottom of the screen. With each
+iteration, the ship is coming closer to the player. The player has evade the
+ship's fire by moving left or right, and try hitting the ship with his own
+missiles before the ship reaches him at the bottom.
 
 I have no idea where the name of this game came from. Implementation is very
-short at just under 350 lines. Apparently this was a direct translation from an
-earlier version written in BASIC. The game does not even use user-defined
-characters for the objects shown on screen. I just included it here, as it
-nicely shows the learning curve, starting with this initial attempt, (actually
-followed by a Pac-Man derivate not included here as a substantial part of the
-code is missing), then the already much larger snakes game, and finally the
-dino-eggs game.
+short at just under 350 lines assembly. Apparently this was a direct
+translation from an earlier version written in BASIC. The game does not even
+use user-defined characters for the objects shown on screen. I just included it
+here, as it nicely shows the learning curve, starting with this initial
+attempt, (actually followed by a Pac-Man derivate not included here as the
+code for generating the maze is missing), then the already much larger snakes
+game, and finally the dino-eggs game.
