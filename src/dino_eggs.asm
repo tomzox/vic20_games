@@ -23,22 +23,34 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // ----------------------------------------------------------------------------
 
-// Enhancement options:
-// - F1 pick up eggs from ceiling
-// - add snake eggs below bases, birthing snakes at random times
-// - add spiders crawling above top level, randomly lowering themselves to a level
-// - improve dino foot stomping by lifting one row and back
-//   OR make async and give player chance to escape
-//   OR replace by dino stampede through the level (3x3 chars each)
-// - add eggs piled above bases
-// - add sound effects
-// - increase difficulty level after won game (e.g. more/faster snake)
-
 // P00 header
 _start_data = $1240
 .word _start_data
 
-// variables in zero-page
+// ----------------------------------------------------------------------------
+// Description of memory layout:
+//
+// $0000-$00ff: pointer variables; see description below
+//
+// $0340-$03ff: data, see below (in BASIC this area is tape buffer)
+//
+// $1000-$1225: screen buffer (extended to 25 rows * 22 columns)
+// $1240-$13ff: read-only data section
+// $1400-$1bff: code section, part 1
+// $1c00-$1d1f: user-defined characters (position restricted by HW/ROM)
+// $1dXX-$2fff: code section, part 2 (including some read-only data)
+
+// ----------------------------------------------------------------------------
+// Main control flow:
+//
+// - $1400: game entry point from BASIC (SYS 5120)
+// - main loop: chain of "jmp" starting at tick_player -> tick_snakes -> ...
+//   and finally back to tick_player
+// - game is ended via "rts"
+
+// ----------------------------------------------------------------------------
+// Description of data / variables:
+//
 // $00-$01: player address
 // $02-$03: snake address, temp copy of $0358-$0359
 // $04-$05: -unused-
@@ -52,13 +64,16 @@ _start_data = $1240
 // $fa-$fe: temp var/pointer
 
 // $0340: saved color below player (companion to $0346)
-// $0341: number of collected eggs; >$7f:wood
+// $0341: number of carried eggs; >$7f:wood
 // $0342: counter of fallen height
 // $0343: score BCD, lower nibbles
 // $0344: score BCD, higher nibbles
 // $0345: message clearing counter
 // $0346: saved char below player (e.g. ladder)
 // $0347: player direction & jump status
+//        $01: right (straight); $02: jump right phase 1; $04: jump right phase 2
+//        $10: left (straight); $20: jump right phase 1; $40: jump right phase 2
+//        $80: jump upwards
 // $0348: on ladder? (0:no, else:yes)
 // $0349: counter fire immunity
 // $034a: main loop counter
@@ -103,10 +118,22 @@ _start_data = $1240
 //  14     $111e
 //  18     $1176
 
+// Enhancement options:
+// - allow picking up eggs from ceiling via F1
+// - add snake eggs below bases, birthing snakes at random times
+// - add spiders crawling above top level, randomly lowering themselves to a level
+// - improve dino foot stomping by lifting one row and back
+//   OR make async and give player chance to escape
+//   OR replace by dino stampede through the level (3x3 chars each)
+// - add eggs piled above bases
+// - add sound effects
+// - increase difficulty level after won game (e.g. more/faster snake)
+
 .text
 * = _start_data
 
-// NOTE: screen buffer occupies $1000...$1225 (25 rows * 22 columns)
+// ----------------------------------------------------------------------------
+//      Read-only data
 
         // screen addresses of bases/levels
 l1240   .word $102c             // top
@@ -181,6 +208,7 @@ l1425	sta ($00),y
 	dey
 	bpl l1425
 
+                        // FIXME allows gap "____....__....____" (i.e. unreachable base section!)
 	ldx #$04        // ---- place gaps in bases ---
 l1334	lda $04,x       // get n-th base address from address list
 	sta $fd         // (starting with 2nd lowest, as lowest must not have gaps)
@@ -506,7 +534,7 @@ l164f   lda l1240+2,x   // base address
 
         jsr place_player_home
 
-        jmp l1700       // enter main loop (which is a chain of jumps)
+        jmp tick_player // enter main loop (which is a chain of jumps)
 
 // ----------------------------------------------------------------------------
 //                      // Sub-function: Place player home at random position
@@ -605,8 +633,9 @@ remove_player_home
 // ----------------------------------------------------------------------------
 //                      // Player actions
 
-l1700	lda $0347
-	and #$e0
+tick_player
+        lda $0347
+	and #$60
 	beq l1745
         jsr undraw_player // --- jump to the left ongoing ---
         jsr get_player_xoff
@@ -623,7 +652,7 @@ l1710	lda $00         // move player one to the left
 	bne l1719
 	dec $01
 l1719	dec $00
-l171a	lda #$0e
+l171a	lda #$0e        // char for player facing left side
 	jsr draw_player
 	lda $0347       // determine next stage
 	cmp #$40
@@ -632,12 +661,12 @@ l171a	lda #$0e
 	bne l172e
 l172c   lda #$00        // 2 -> jump done
 l172e	sta $0347
-	jmp l1e0d
+	jmp player_status_check
 
-l1745	lda $0347       // --- jump to the right ongoing ---
-	and #$0e
-	beq l1786
-	jsr undraw_player
+l1745	lda $0347
+	and #$06
+	beq l1780
+	jsr undraw_player // --- jump to the right ongoing ---
 	inc $00         // player pos one to the right
 	bne l175e
 	inc $01
@@ -650,7 +679,7 @@ l175e   jsr get_player_xoff
         bcs l1760
         dec $01
 l1760   sta $00
-l1761   lda #$0f
+l1761   lda #$0f        // char for player facing right side
 	jsr draw_player
 	lda $0347       // determine next stage
 	cmp #$04
@@ -659,7 +688,23 @@ l1761   lda #$0f
         bne l1771
 l176f	lda #$00        // jump done (but only sideways part of jump; next: falling)
 l1771	sta $0347
-	jmp l1e0d
+	jmp player_status_check
+
+l1780	lda $0347
+	and #$80
+	beq l1786
+	jsr undraw_player // --- jump upwards ongoing ---
+        lda $00         // move player one row up
+        sec
+        sbc #$16
+        bcs l1781
+        dec $01
+l1781   sta $00
+        lda #$0c        // char for player normal shape
+	jsr draw_player
+        lda #$00        // jump done (but only of jumping stage; next stage: falling)
+        sta $0347
+	jmp player_status_check
 
 l1786   lda $0348       // player on ladder?
 	bne l17c9       // -> never fall (i.e. even if snake crawls below)
@@ -684,7 +729,7 @@ l17aa	sta $00
         lda #$10        // char for falling player
         jsr draw_player
         inc $0342
-        jmp l1e0d
+        jmp player_status_check
 
 l17c9   lda $0342
         beq l17cb
@@ -742,7 +787,7 @@ l17f4	sta $00
 	jsr draw_player
 	lda #$20        // store direction indicator (needed for allowing jump)
 	sta $0347
-	jmp l1e0d
+	jmp player_status_check
 
 l1807   lda $0347       // player moving right?
 	cmp #$01
@@ -780,7 +825,7 @@ l183c	sta $00
 	jsr draw_player
 	lda #$02        // store jump status
 	sta $0347
-	jmp l1e0d
+	jmp player_status_check
 
 l184f	lda $0348       // on ladder
         beq l1851
@@ -803,7 +848,7 @@ l186c	dec $00
 	sta $0347
 	lda #$0e
 	jsr draw_player
-	jmp l1e0d
+	jmp player_status_check
 
 l18ba	lda $03ec
 	cmp #$29        // key 'S' (note: allow SHIFT being pressed already)
@@ -830,7 +875,7 @@ l18f2	lda #$0f
 	jsr draw_player
 	lda #$01
 	sta $0347
-	jmp l1e0d
+	jmp player_status_check
 
 l187f	lda $03ec
 	cmp #$09        // key 'W' (up)
@@ -854,7 +899,7 @@ l1897	lda #$01        // --- climbing up ---
 l18a5	sta $00
 	lda #$0d        // draw climbing player figure
 	jsr draw_player
-l18b3   jmp l1e0d
+l18b3   jmp player_status_check
 
 l1903	lda $03ec
 	cmp #$21        // key 'Z' (descend ladder)
@@ -891,7 +936,7 @@ l193d   ldy #$00        // stop climbing
 	lda #$0c        // change already drawn player figure to "normal"
 	sta ($00),y
         jsr activate_snake_player
-l1930   jmp l1e0d
+l1930   jmp player_status_check
 
 l1944	lda $03ec
 	cmp #$27        // key F1?
@@ -905,27 +950,26 @@ l1951	lda $0348       // player climbing up/down ladder?
 	cmp #$0a        // ladder behind player?
 	bne l1958
         jmp l1897       // yes -> handle equiv. regular "up" movement
-l1958	jsr undraw_player
-        lda $00
-        sta $10
+l1958   lda $00         // --- trigger jump upwards ---
+        sta $10         // determine on which level player is standing
         lda $01
         sta $11
         jsr get_base_idx_and_xoff
+        bcc l196e       // not standing on a base -> abort
+        cpx #$03*2      // in top-most level?
+        bcs l1961       // yes -> jump only one row (height is one less than in other levels)
+        lda #$80        // no -> set jump status to continue upwards movement in next iteration
+	sta $0347
+l1961   jsr undraw_player
 	lda $00
-        cpx #$03*2      // in top-most level, whose height is one row less?
-        bne l195a
-        sec             // yes -> move player up only by one row
-	sbc #$16
+        sec
+	sbc #$16        // move player up only by one row
 	bcs l1963
-	bcc l195b
-l195a   sec             // move player up by two rows
-	sbc #$2c
-	bcs l1963
-l195b	dec $01
+        dec $01
 l1963	sta $00
 	lda #$0c        // draw player figure; normal form
 	jsr draw_player
-	jmp l1e0d
+        jmp player_status_check
 
 l196e	lda $03ec
         cmp $03df       // skip if F7 key not released since last processed
@@ -937,7 +981,7 @@ l196e	lda $03ec
 l196f   lda $911f       // joystick xxx?
 	and #$28
 	beq l197e
-	jmp l1e08       // to "player no action"
+	jmp player_no_action
 
                         // --- check F7 in home base? ---
 l197e	ldy #$17        // check if player at home:
@@ -971,7 +1015,7 @@ l197e	ldy #$17        // check if player at home:
         lda #$00        // yes -> game won!
         jmp post_game
 l19a0   jsr place_player_home // -> move home & player to random position
-        jmp l1e0d
+        jmp player_status_check
 
                         // --- F7 to pick up wood (& light fire)? ---
 l19ae	ldy #$16        // read char one row below player
@@ -987,7 +1031,7 @@ l19ae	ldy #$16        // read char one row below player
 	lda #$80        // remember carrying wood
 	sta $0341
         jsr prt_egg_status
-l19b1	jmp l1e0d
+l19b1	jmp player_status_check
 l19b2	jmp l19d8
 
                         // --- F7 to pick up eggs? ---
@@ -1011,7 +1055,7 @@ l1a80   lda #<l1317     // zero or negative -> print "TOO HEAVY"
 	lda #>l1317
         sta $11
         jsr prt_message
-	jmp l1e0d
+	jmp player_status_check
 l1a90   tax
 l1a91   ldy #$2c
 	lda ($00),y     // read char 2 rows below player
@@ -1034,7 +1078,7 @@ l1a7f   sta ($00),y     // draw char with one egg less
         dex
         bne l1a91       // iterate until max. no. of carried eggs reached
 l1a81   jsr prt_egg_status
-	jmp l1e0d
+	jmp player_status_check
 
                         // --- F7 to pick up power-gain? ---
 l1b2d	ldy #$16        // read char one row below player
@@ -1052,12 +1096,12 @@ l1b2d	ldy #$16        // read char one row below player
 	lda #>l1316
         sta $11
         jsr prt_message
-l1b52	jmp l1e0d
+l1b52	jmp player_status_check
 
 l1b55	cmp #$02        // base with stone?
 	bne l1a23
         jsr start_stone_fall
-	jmp l1e0d
+	jmp player_status_check
 
                         // --- F7 to drop carried egg or wood? ---
 l1a23	cmp #$00        // empty base under player?
@@ -1070,7 +1114,7 @@ l1a23	cmp #$00        // empty base under player?
 	lda #$00        // clear carry status
 	sta $0341
         jsr prt_egg_status
-	jmp l1e0d
+	jmp player_status_check
 
 l1a4e	lda $0341       // player carrying any eggs?
 	beq l1b52       // no -> abort
@@ -1089,7 +1133,7 @@ l1af8	dec $0341
         ldy #$2c
         sta ($00),y     // write char below base
 l1af9	jsr prt_egg_status
-	jmp l1e0d
+	jmp player_status_check
 
                         // --- try lighting a fire ---
 l19d8	lda $0346
@@ -1135,15 +1179,18 @@ l19e0   ldy #$16        // remove wood (i.e. draw empty base below player)
         lda #>l12e3
         sta $11
         jsr prt_message
-l1a20	jmp l1e0d
+l1a20	jmp player_status_check
 
 
 // ----------------------------------------------------------------------------
-// Character generator data
+// User-defined characters
 // - 32 user-defined characters, 8x8 bit each
-// - mapped to start at $1c00 (register $9005)
+// - must start at $1c00, where the data is read by VIA HW (register $9005)
+// - note address is selected so that char codes $80-$ff are mapped to
+//   upper-case character definitions in ROM (i.e. address cannot be changed!)
 
-// fill up to next segment
+// fill up possible gap before fixed start address of this section
+// ATTENTION: assembler "xa" will not generate error if the gap has negative size
 .dsb $1c00 - *, 0
 * = $1c00
 
@@ -1236,217 +1283,20 @@ l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$1e: fire v2
 // perl -pe 'tr /\.x\|/01 /d;s/([01]{8})/sprintf("\$%02x,", oct("0b$1"));/ge;'
 
 // ----------------------------------------------------------------------------
-//                      // Stone fall
-
-l1d08   ldx #$00
-l1d09   lda $03e0,x
-        bne l1d01
-        jmp l1dee
-
-l1d01   stx $fa
-        lda $03e4,x
-	sta $0a
-        lda $03e5,x
-	sta $0b
-
-        lda $03e0,x
-        cmp #$01
-        bne l1d02
-        lda $0a         // --- start loop for falling stone ---
-	sta $10         // temp copy of address for sub-function
-        lda $0b
-	sta $11
-        jsr get_base_idx_and_xoff
-        bcs l1d11
-        ldx $fa
-        lda #$00
-        sta $03e0,x
-        jmp l1dee       // abort if player is not directly above a base (should never happen)
-l1d11   tay
-	lda l1250,x
-	sta $10
-	lda l1250+1,x
-	sta $11
-	lda ($10),y     // query egg directory for content previously hidden by stone
-        ldx $fa
-        sta $03e1,x     // store result
-        cmp #$40
-        bcc l1d40
-	lda #$04        // char for base with power-gain
-	bne l1d4d
-l1d40	and #$23
-	cmp #$10
-	bcc l1d47
-	lda #$03        // char for base with wood
-	bne l1d4d
-l1d47	cmp #$01
-	bcc l1d4d
-	lda #$01        // char for base with egg
-l1d4d	ldy #$16
-	sta ($0a),y     // draw new base char (FIXME to be safe also set color)
-	ldy #$2c        // offset to row below base
-	lda #$16        // char for upper half of stone without base
-	sta ($0a),y
-	ldy #$42        // offset two rows below base
-	lda ($0a),y
-	cmp #$20        // room for lower half of stone?
-	bne l1d63
-	lda #$09        // draw lower half of stone
-	sta ($0a),y
-
-l1d63   lda #$02        // continue stone-fall in next iteration
-        sta $03e0,x
-        jmp l1dec
-
-l1d02   cmp #$02        // --- second stage: stone two rows below base ---
-        bne l1dd0
-
-	lda $03e1,x     // query egg directory again for drawing row below base
-	cmp #$40        // power gain?
-        bcc l1d70
-        lda #$0b        // char for lower half of power gain
-        bne l1d7d
-l1d70	and #$03
-	cmp #$02        // more than one egg?
-	bcc l1d7b
-	adc #$07-2-1    // char for one or two eggs (-2 for egg# >=2; -1 due to omitting CLC)
-	bne l1d7d
-l1d7b	lda #$20        // blank char
-l1d7d	ldy #$2c        // stone address + 2 rows
-	sta ($0a),y
-
-	lda $0a         // address of upper-half of stone
-	clc
-	adc #$42
-	bcc l1d8a
-	inc $0b
-l1d8a	sta $0a
-        lda #$03        // fall-through to third stage
-        sta $03e0,x
-        bne l1d8c
-
-l1dd0	ldy #$00        // --- third stage: stone 3 or more rows below ---
-        lda #$20
-	sta ($0a),y     // remove upper half of stone
-	lda $0a         // move stone pointer one row down
-	clc
-	adc #$16
-	bcc l1dd3
-	inc $0b
-l1dd3	sta $0a
-
-l1d8c	ldy #$00
-	lda ($0a),y     // read char below new base
-	cmp #$09        // is lower half of stone?
-	beq l1dac
-	cmp #$20
-	beq l1dac
-        cmp #$11        // is any part of a snake?
-        bcc l1d90
-        cmp #$15+1
-        bcs l1d90
-        lda $0a         // yes -> kill snake
-        sta $10
-        lda $0b
-        sta $11
-        jsr stomp_snake_addr
-        ldx $fa
-        bcs l1d8c       // check char below snake again
-        bcc l1de0       // no snake matched (should never be reached)
-
-l1d90   cmp #$1e        // is fire hit by stone?
-	bne l1dd8       // no (and not blank) -> stop stone fall
-	ldy #$2c        // yes -> nearly extinguish fire
-	lda #$b2        // set fire counter to '2'
-	sta ($0a),y
-	lda #$ff        // manipulate timer to make fire counter decrement immediately
-	sta $034a
-	bne l1de0       // end stone fall
-
-l1dac	lda #$16        // draw upper half of stone
-	sta ($0a),y
-	ldy #$16
-	lda ($0a),y
-	cmp #$20        // still blank one row below?
-	bne l1dbc
-	lda #$09        // yes -> draw lower half of stone
-	sta ($0a),y
-l1dbc	jmp l1dec       // continue stone fall in next iteration
-
-l1dd8   lda $0a         // undo last subtraction: pointer into row above base
-	sec
-	sbc #$16
-	bcs l1dd9
-	dec $0b
-l1dd9	sta $0a
-
-        lda $03e1,x     // check egg directory of base/level above
-        and #$ff-$10    // anything below stone?
-        bne l1de0
-        // FIXME enable this after changing egg placement to be less distributed
-	//jsr get_rand    // get RAND number: randomly spawn snake on this level
-        //cmp #64         // probability 64/256 ~ 25%
-        //bcs l1de0
-        lda $0a
-        sta $10
-        lda $0b
-        sta $11
-        jsr get_base_idx_and_xoff
-        bcc l1de0
-        jsr spawn_snake
-
-l1de0   ldx $fa
-        ldy #$16
-        lda ($0a),y
-	cmp #$02        // stone hit base with stone?
-	bne l1de1
-        lda #$01        // yes -> new stone fall at current position
-        bne l1de2
-l1de1   lda #$00        // no -> end stone fall
-l1de2   sta $03e0,x
-
-l1dec	lda $0a
-        sta $03e4,x
-        lda $0b
-        sta $03e5,x
-l1dee	inx
-        inx
-        cpx #$02+1      // next falling stone
-        bcs l1def
-        jmp l1d09
-l1def   jmp l1700
-
-start_stone_fall
-        ldx #$00
-l1df0   lda $03e0,x
-        bne l1df1
-        lda $00         // store start address, equal player address
-	sta $03e4,x
-	lda $01
-	sta $03e5,x
-        lda #$01
-        sta $03e0,x
-        rts
-l1df1   inx
-        inx
-        cpx #$02+1
-        bcc l1df0
-        rts
-
-
-// ----------------------------------------------------------------------------
 //                      // --- player status handling ---
+// Note this section has two alternate entry points
 
-l1e08	lda #$00        // no player action (i.e. no key/joystick input)
+player_no_action        // no player action (i.e. no key/joystick input)
+        lda #$00
 	sta $0347       // -> clear direction to "not moving"
         ldy #$00
 	lda ($00),y
         cmp #$10
-        bne l1e0d
+        bne player_status_check
         lda #$0c        // change player figure from falling to normal
         sta ($00),y
 
-l1e0d
+player_status_check     // jumped to after player actions (e.g. key input)
 	lda $0348       // player on ladder?
 	beq l1e2f
 	lda $0346       // check char behind player
@@ -1590,7 +1440,7 @@ l1e71   inx             // loop across 2 fires
 	beq l1eb0
         cmp #$b0        // '0'?
 	beq l1eb4
-	jmp l2100
+	jmp tick_snakes
 
 l1eb0	lda #<l130d     // print "FIRE IS GOING OUT"
         sta $10
@@ -1599,7 +1449,7 @@ l1eb0	lda #<l130d     // print "FIRE IS GOING OUT"
         jsr prt_message
         lda #$20
 	sta $0349
-	jmp l2100
+	jmp tick_snakes
 
 l1eb4	lda #$01        // new fire status: "make a fire"
 	sta $034d
@@ -1613,7 +1463,7 @@ l1eb4	lda #$01        // new fire status: "make a fire"
         jsr prt_message
         lda #$20
 	sta $0349
-	jmp l2100
+	jmp tick_snakes
 
 l1ef1	lda $034d
 	and #$f8
@@ -1621,7 +1471,7 @@ l1ef1	lda $034d
 	jmp l1f9c       // to "dino mum actions"
 l1efb	lda $034c       // timer running?
 	bne l1f03
-l1f00	jmp l2100       // to "snakes"
+l1f00	jmp tick_snakes       // to "snakes"
 l1f03	dec $034c       // counter up to status message
 	bne l1f00
 l1f08	lda $034d
@@ -1639,7 +1489,7 @@ l1f0d	cmp #$01        // fire status 1? (fire freshly out)
 	sta $034c
 l1f26	lda #$20
 	sta $0349
-	jmp l2100
+	jmp tick_snakes
 
 l1f2e	cmp #$02        // fire status 2?
 	bne l1f49
@@ -1688,9 +1538,13 @@ l1f91	sta $0e         // store base address for dino foot
 	sta $0f
 	lda #$08        // new fire status = 8
 	sta $034d
+        // fall-through
 
 // ----------------------------------------------------------------------------
 //                      // --- dino mum actions ---
+//                      // This is a "busy loop" animating a huge foot stomping
+//                      // down on the player figure (i.e. nothing else can move
+//                      // concurrently, esp. player cannot flee).
 
 l1f9c	lda $034d       // attack ongoing?
 	cmp #$10
@@ -1819,40 +1673,14 @@ l206e	sta $1000,x
 	lda #$01
 	sta $0349
 	jsr clr_message
-	jmp l2100
+	jmp tick_snakes
 
 // ----------------------------------------------------------------------------
-//                      // Snake driver
-
-// $0352: snake status: 0=inactive; 1=coiled up; 2,3=moving v1,v2
-// $0353: snake Y offset
-// $0358,$0359: snake address
-// $035e,$035f: snake char under tail,head / timer until uncoiling LSB/MSB
+//                      // Snake main tick, animating all snake instances
 
 
-l2100
-#if 0
-        //XXX DEBUG
-        lda $0352
-        clc
-        adc #$81
-        sta $1002
-        lda $0353
-        clc
-        adc #$81
-        sta $1003
-        lda $035f
-        clc
-        adc #$81
-        sta $1004
-        lda $035e
-        sta $1005
-        lda $035f
-        sta $1006
-        //XXX DEBUG
-#endif
-
-	ldx #$04        // iterate across snakes: X:=4->2->0
+tick_snakes
+	ldx #$04        // iterate across snake instances: X:=4->2->0
         stx $fa         // backup iteration index
 l2101   lda $0358,x     // copy snake (base) address to $02-$03
         sta $02
@@ -1862,9 +1690,9 @@ l2101   lda $0358,x     // copy snake (base) address to $02-$03
         clc             // calc color (base) address $10-$11
         adc #$84
         sta $11
-        lda $0352,x
+        lda $0352,x     // get snake status
         bne l2107
-l2108   jmp l2102       // inactive state -> skip this snake
+l2108   jmp l2102       // inactive state -> skip this snake instance
 
 l2107   cmp #$01        // in coiled up state?
         bne l2105
@@ -1979,10 +1807,21 @@ l2102   dex
         bmi l2103
         jmp l2101
 
-l2103	jmp l1d08
+l2103	jmp tick_stone_fall
 
-//                      // Parameter: A:=Xoff (col index in row above base)
-//                      //            X:=snake index
+// ----------------------------------------------------------------------------
+// Sub-function for activating a snake in a given level at a given X-offset
+// Note only a single snake per level is supported & only in 3 lower levels.
+// The call is ignored silently if a snake already is active on this level.
+// Snakes are created in coiled-up state and uncoil after a random delay.
+//
+// NOTE: The caller has to check the given start position does not overlap
+// any other moving object, esp. the player.
+//
+// - Parameter: A:=Xoff (col index in row above base)
+//              X:=level index * 2
+// - Results: none
+
 spawn_snake
         cpx #$2*2+1     // check range of X
         bcs l2621
@@ -2023,6 +1862,14 @@ spawn_snake
         sta $035f,x
 l2621   rts
 
+// ----------------------------------------------------------------------------
+// Sub-function for killing the snake on the same level as the player
+//
+// Parameters: global $00-$01: player address (read-only)
+// Side-effects: overwrites temporary $10-$11
+//               invalidates X,Y
+// Results: status.C: 1 when snake killed; else 0
+
 stomp_snake_player
         clc
         adc $00         // Parameter: Accu contains X-offset
@@ -2033,6 +1880,13 @@ stomp_snake_player
         jsr get_base_idx_and_xoff
         bcs stomp_snake_x
         rts
+
+// ----------------------------------------------------------------------------
+// Sub-function for killing the snake on the given level
+//
+// Parameters: $10-$11: screen address (in row above a level)
+// Side-effects: invalidates X,Y
+// Results: status.C: 1 when snake killed; else 0
 
 stomp_snake_addr
         jsr get_base_idx_and_xoff
@@ -2078,6 +1932,17 @@ l2602   lda #$00        // set state to inactive
 l2601   clc
         rts
 
+// ----------------------------------------------------------------------------
+// Sub-function for uncoiling a snake on the same level as the player.
+// This function is called whenever a player changes levels (e.g. via ladder)
+// The function does nothing if no snake is active on this level or if the
+// snake is not currently coiled-up.
+//
+// Parameters: global $00-$01: player address (read-only)
+// Side-effects: overwrites temporary $10-$11
+//               invalidates X,Y
+// Results: none
+
 activate_snake_player
         lda $00
         sta $10
@@ -2091,9 +1956,14 @@ activate_snake_player
         sta $035f,x     // make timer expire in next tick
 l2630   rts
 
-//                      // Parameters: X := level to compare (not invalidated by function)
-//                                     $00-$01: player address
-//                      // Results: status.C := 1=OK, 0=nOK
+// ----------------------------------------------------------------------------
+// Sub-function to querying if player is on the given level
+//
+// Parameters: X := level to compare *2 (not invalidated by function)
+//             $00-$01: player address
+// Side-effects: invalidates Y
+// Results: status.C := 1=OK, 0=nOK
+
 is_player_same_level
         cpx #$2*2+1     // check range of X
         bcs l2640
@@ -2108,12 +1978,222 @@ is_player_same_level
 	bcs l2640
         sec             // result: yes
         rts
-l2640   clc
+l2640   clc             // result: no
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function for updating "carrying" status
-//                      // called after picking up or dropping any item
+//                      // Stone fall tick function
+
+tick_stone_fall
+        ldx #$00        // loop across all instances of falling stones
+l1d09   lda $03e0,x
+        bne l1d01
+        jmp l1dee       // inactive -> skip this instance
+
+l1d01   stx $fa         // backup X = loop index
+        lda $03e4,x     // copy screen address to pointer in ZP
+	sta $0a
+        lda $03e5,x
+	sta $0b
+
+        lda $03e0,x     // get instance state
+        cmp #$01
+        bne l1d02
+        lda $0a         // --- start loop for falling stone ---
+	sta $10         // temp copy of address for sub-function
+        lda $0b
+	sta $11
+        jsr get_base_idx_and_xoff
+        bcs l1d11
+        ldx $fa
+        lda #$00
+        sta $03e0,x
+        jmp l1dee       // abort if player is not directly above a base (should never happen)
+l1d11   tay
+	lda l1250,x
+	sta $10
+	lda l1250+1,x
+	sta $11
+	lda ($10),y     // query egg directory for content previously hidden by stone
+        ldx $fa
+        sta $03e1,x     // store result
+        cmp #$40
+        bcc l1d40
+	lda #$04        // char for base with power-gain
+	bne l1d4d
+l1d40	and #$23
+	cmp #$10
+	bcc l1d47
+	lda #$03        // char for base with wood
+	bne l1d4d
+l1d47	cmp #$01
+	bcc l1d4d
+	lda #$01        // char for base with egg
+l1d4d	ldy #$16
+	sta ($0a),y     // draw new base char (FIXME to be safe also set color)
+	ldy #$2c        // offset to row below base
+	lda #$16        // char for upper half of stone without base
+	sta ($0a),y
+	ldy #$42        // offset two rows below base
+	lda ($0a),y
+	cmp #$20        // room for lower half of stone?
+	bne l1d63
+	lda #$09        // draw lower half of stone
+	sta ($0a),y
+
+l1d63   lda #$02        // continue stone-fall in next iteration
+        sta $03e0,x
+        jmp l1dec
+
+l1d02   cmp #$02        // --- second stage: stone two rows below base ---
+        bne l1dd0
+
+	lda $03e1,x     // query egg directory again for drawing row below base
+	cmp #$40        // power gain?
+        bcc l1d70
+        lda #$0b        // char for lower half of power gain
+        bne l1d7d
+l1d70	and #$03
+	cmp #$02        // more than one egg?
+	bcc l1d7b
+	adc #$07-2-1    // char for one or two eggs (-2 for egg# >=2; -1 due to omitting CLC)
+	bne l1d7d
+l1d7b	lda #$20        // blank char
+l1d7d	ldy #$2c        // stone address + 2 rows
+	sta ($0a),y
+
+	lda $0a         // address of upper-half of stone
+	clc
+	adc #$42
+	bcc l1d8a
+	inc $0b
+l1d8a	sta $0a
+        lda #$03        // fall-through to third stage
+        sta $03e0,x
+        bne l1d8c
+
+l1dd0	ldy #$00        // --- third stage: stone 3 or more rows below ---
+        lda #$20
+	sta ($0a),y     // remove upper half of stone
+	lda $0a         // move stone pointer one row down
+	clc
+	adc #$16
+	bcc l1dd3
+	inc $0b
+l1dd3	sta $0a
+
+l1d8c	ldy #$00
+	lda ($0a),y     // read char below new base
+	cmp #$09        // is lower half of stone? (written by previous iteration)
+	beq l1dac       // yes -> continue stone-fall
+	cmp #$20        // blank? -> continue
+	beq l1dac
+        cmp #$11        // is any part of a snake?
+        bcc l1d90
+        cmp #$15+1
+        bcs l1d90
+        lda $0a         // yes -> kill snake
+        sta $10
+        lda $0b
+        sta $11
+        jsr stomp_snake_addr
+        ldx $fa
+        bcs l1d8c       // snake found -> check char below stone again
+        bcc l1de0       // no snake matched (should never be reached)
+
+l1d90   cmp #$1e        // is fire hit by stone?
+	bne l1dd8       // no (and not blank) -> stop stone fall
+	ldy #$2c        // yes -> nearly extinguish fire
+	lda #$b2        // set fire counter to '2'
+	sta ($0a),y
+	lda #$ff        // manipulate timer to make fire counter decrement immediately
+	sta $034a
+	bne l1de0       // end stone fall
+
+l1dac	lda #$16        // draw upper half of stone
+	sta ($0a),y
+	ldy #$16
+	lda ($0a),y
+	cmp #$20        // still blank one row below?
+	bne l1dbc
+	lda #$09        // yes -> draw lower half of stone
+	sta ($0a),y
+l1dbc	jmp l1dec       // continue stone fall in next iteration
+
+l1dd8   lda $0a         // undo last subtraction: pointer into row above base
+	sec
+	sbc #$16
+	bcs l1dd9
+	dec $0b
+l1dd9	sta $0a
+
+        lda $03e1,x     // check egg directory of base/level above
+        and #$ff-$10    // anything below stone?
+        bne l1de0
+        // FIXME enable this after changing egg placement to be less distributed
+	//jsr get_rand    // get RAND number: randomly spawn snake on this level
+        //cmp #64         // probability 64/256 ~ 25%
+        //bcs l1de0
+        lda $0a
+        sta $10
+        lda $0b
+        sta $11
+        jsr get_base_idx_and_xoff
+        bcc l1de0
+        jsr spawn_snake
+
+l1de0   ldx $fa
+        ldy #$16
+        lda ($0a),y
+	cmp #$02        // stone hit base with stone?
+	bne l1de1
+        lda #$01        // yes -> new stone fall at current position
+        bne l1de2
+l1de1   lda #$00        // no -> end stone fall
+l1de2   sta $03e0,x
+
+l1dec	lda $0a
+        sta $03e4,x
+        lda $0b
+        sta $03e5,x
+l1dee	inx
+        inx
+        cpx #$02+1      // next falling stone
+        bcs l1def
+        jmp l1d09
+
+l1def   jmp tick_player // jump back to first of main "tick" loop
+
+// ----------------------------------------------------------------------------
+// Sub-function for starting a stone-fall, usually triggered by user.
+// The function silently ignores if the max. number of falling stones is
+// already reached (i.e. the stone will remain unchanged in that case).
+//
+// Parameters: global $00-$01: player position (read-only)
+// Side-effects: invalidates X
+
+start_stone_fall
+        ldx #$00
+l1df0   lda $03e0,x     // stone instance already active?
+        bne l1df1       // yes -> try next
+        lda $00         // store screen start address, equal player address
+	sta $03e4,x
+	lda $01
+	sta $03e5,x
+        lda #$01        // set initial state
+        sta $03e0,x
+        rts
+l1df1   inx
+        inx
+        cpx #$02+1      // max. no of instances reached?
+        bcc l1df0
+        rts
+
+// ----------------------------------------------------------------------------
+// Sub-function for updating "carrying" status;
+// to be called after picking up or dropping any item
+//
+// - Parameter: global $0341 (read-only)
 
 prt_egg_status
 	lda $0341
@@ -2146,9 +2226,9 @@ l2203   stx $11a2+4*$16+1  // print higher digit
         adc #$b0        // calc lower digit: '0' plus value <10
         sta $11a2+4*$16+2  // print lower digit
 	lda $0341
-        cmp #1
+        cmp #1          // multiple eggs?
         bne l2204
-	ldx #$04
+	ldx #$04        // no -> use singular
 l2205	lda l12de-1,x   // print "EGG "
 	sta $11a2+4*$16+3-1,x
 	dex
@@ -2162,11 +2242,12 @@ l2206	lda l12df-1,x   // print "EGGS"
         rts
 
 // ----------------------------------------------------------------------------
-//                      Sub-function: draw player figure
-//                      - Parameter: A = new player char code
-//                      - implied: $00-$01: current player address
-//                      - side-effect: stores char/color under player $0346/$0340
-//                                     overwrites temp pointer $10-$11
+// Sub-function: draw/delete player figure
+//
+// - Parameter: A = new player char code
+// - globals: $00-$01: current player address (read-only)
+// - side-effects: stores char/color under player $0346/$0340
+//                 overwrites temp pointer $10-$11
 
 draw_player
         tax
@@ -2203,12 +2284,13 @@ undraw_player
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function: calc base level idx (*2) and X-offset
-//                      // Parameter: $10-$11: address - must be in row ABOVE a base
-//                      // Results: A := X-offset
-//                      //          X := base index * 2
-//                      //          status.C := 1=OK, 0=nOK (addr out of range)
-//                      // Note: the bottom-most level has index 0, above 2 etc.
+// Sub-function: calc base level idx (*2) and X-offset
+// - Parameter: $10-$11: address - must be in row ABOVE a base
+// - Results: A := X-offset
+//            X := base index * 2
+//            status.C := 1=OK, 0=nOK (addr out of range)
+//
+// Note: the bottom-most level has index 0, above 2 etc.
 
 get_base_idx_and_xoff
         ldx #$06        // iterate across all bases
@@ -2233,10 +2315,10 @@ l2327	tya
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function to calculate column index of the player figure
-//                      // Parameter: implicit $00-$01
-//                      // Side-effect: invalidates Y
-//                      // Result: A := player address % 22
+// Sub-function to calculate column index of the player figure
+// - Parameter: global $00-$01 (read-only)
+// - Side-effects: invalidates Y; X not used
+// - Results: A := player address % 22
 
 get_player_xoff
         lda $01         // player address MSB
@@ -2254,8 +2336,12 @@ l2331	sbc #$16
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function for adding points to score and display
-//                      // Parameter: A = number of points to be added in BCD
+// Sub-function for adding points to score counter and updating display
+// - Parameter: A = in BCD: number of points to be added
+// - Side-effects: invalidates X; Y not used
+//                 overwrites temporary $03de
+// - Results: none
+
 add_score
         ldx #$00        // convert parameter to BCD
 l2302   cmp #$0a        // calc X:=val/10
