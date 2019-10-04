@@ -49,12 +49,12 @@
 _start_data = $1240
 .word _start_data
 
-// variables
+// variables in zero-page
 // $00-$01: player address
 // $02-$03: snake address, temp copy of $0358-$0359
 // $04-$05: -unused-
 // $06-$07: -unused-
-// $08-$09: beam station
+// $08-$09: beam station address
 // $0a-$0b: falling stone address, temp copy of $03e4-$03e5
 // $0c-$0d: -unused-
 // $0e-$0f: address dino foot
@@ -86,17 +86,20 @@ _start_data = $1240
 // $0364,$0365: snake color under tail,head
 
 // $0384...$03dd: egg directory (for 4 bases, len=$16 each (see l1250)) bitmask:
-//                mask $0f: egg count
+//                mask $03: egg count
 //                mask $10: stone
 //                mask $20: wood
 //                mask $40: power gain
 //                mask $80: ladder <-> blocked for content
 // $03de: temporary
-// $03df: prev_keypress
+// $03df: previous keypress (copied from $cb) used to suppress auto-repeat on F7
 // $03e0: stone-fall: state 0=none, 1=start, 2=fall
 // $03e1: stone-fall: content below stone
 // $03e4-$03e5: stone-fall: address (meaning varies with state)
-// $03e2,...,$03e67: words $03e0,$03e4 are arrays [2]
+// $03e2,...,$03e7: words $03e0,$03e4 are arrays [2]
+// $03e8-$03ea: copy of $a0-$a2 (big-endian!)
+// $03eb: next keypress: $ff=invalid until peek($cb) != $40
+// $03ec: current keypress (used during player actions)
 
 
 // address of levels on screen:
@@ -478,8 +481,6 @@ l1638	sta $0340,x
 	lda #$00        // invalidate MSB fire address #1 and #2
 	sta $034f
 	sta $034f+2
-        sta $03e0       // initialize falling stone state
-        sta $03e2
 
 	ldx #$04        // initialize snake addresses
 l164f   lda l1240+2,x   // base address
@@ -493,12 +494,30 @@ l164f   lda l1240+2,x   // base address
 	dex
 	bpl l164f
 
+        lda #$00
+        sta $03e0       // initialize falling stone state
+        sta $03e2
+
+        lda #$40        // initialize keypress buffers
+        sta $03df
+        sta $03eb
+
+        sei             // disable interrupts to get consistent values
+        lda $a0         // initial copy of clock counter
+        sta $03e8
+        lda $a1
+        sta $03e9
+        lda $a2
+        sta $03ea
+        cli
+
         lda #$00        // create initial snake on lowest level, Xoff=0
         ldx #$00        // base level index
         jsr spawn_snake
 
 // ----------------------------------------------------------------------------
 //                      // Place player home randomly
+//      FIXME change this into sub-function to be called by F7
 
 l1670	lda $8c         // --- select random start position for player ---
 	and #$03        // random level 0..3
@@ -583,11 +602,21 @@ l1700	lda $0347
 	and #$e0
 	beq l1745
         jsr undraw_player // --- jump to the left ongoing ---
-	lda $00         // move player one to the left
+        jsr get_player_xoff
+        cmp #$00        // get current column
+        bne l1710
+        lda $00         // col 0 -> movement will wrap at left border
+        clc
+        adc #$16-1
+        sta $00
+        bne l171a
+        inc $01
+        bne l171a
+l1710	lda $00         // move player one to the left
 	bne l1719
 	dec $01
 l1719	dec $00
-	lda #$0e
+l171a	lda #$0e
 	jsr draw_player
 	lda $0347       // determine next stage
 	cmp #$40
@@ -598,15 +627,23 @@ l172c   lda #$00        // 2 -> jump done
 l172e	sta $0347
 	jmp l1e0d
 
-l1745	lda $0347       // --- start jump to the right ---
+l1745	lda $0347       // --- jump to the right ongoing ---
 	and #$0e
 	beq l1786
 	jsr undraw_player
-                        // FIXME need to catch wrap at right border for row decrement
 	inc $00         // player pos one to the right
 	bne l175e
 	inc $01
-l175e   lda #$0f
+l175e   jsr get_player_xoff
+        cmp #$00        // column zero, i.e. wrapped at right border?
+        bne l1761
+        lda $00         // yes -> move one row up
+        sec
+        sbc #$16
+        bcs l1760
+        dec $01
+l1760   sta $00
+l1761   lda #$0f
 	jsr draw_player
 	lda $0347       // determine next stage
 	cmp #$04
@@ -617,21 +654,17 @@ l176f	lda #$00        // jump done (but only sideways part of jump; next: fallin
 l1771	sta $0347
 	jmp l1e0d
 
-l1786	lda $0348       // player on ladder?
-	beq l178e
-	jmp l187f       // yes -> skip/disallow left or right movement
-
-l178e	ldy #$16
+l1786   lda $0348       // player on ladder?
+	bne l17c9       // -> never fall (i.e. even if snake crawls below)
+        ldy #$16
 	lda ($00),y     // read char in row directly below player
-	cmp #$0a        // ladder?
-	beq l17c9
 	cmp #$07        // any kind of base?
-	bcc l17c9
+	bcc l17c9       // yes -> don't fall
         cmp #$11        // any part of a snake?
         bcc l1790
         cmp #$15+1
         bcs l1790
-        tya
+        tya             // yes -> kill snake, then fall into its place
         jsr stomp_snake_player
 l1790   ldy #$00        // --- free fall ---
 	jsr undraw_player
@@ -656,10 +689,25 @@ l17ca   lda #$00        // clear falling row counter
         sta $0342
         jsr activate_snake_player
 
-l17cb   lda $0347
+//                      // ---- actions depending on key-press ----
+l17cb   sei
+        lda $03eb       // any key-press detected since action handler?
+        cmp #$40
+        bne l17cc       // yes -> use that buffered key-press
+        lda $cb         // no -> poll currently pressed key
+l17cc   sta $03ec       // buffer for following processing
+        lda #$40
+        sta $03eb
+        cli
+
+        lda $0348       // player on ladder?
+	beq l178e
+	jmp l184f       // yes -> skip/disallow jumps
+l178e
+        lda $0347
 	cmp #$10        // player moving left?
 	bne l1807
-        //lda $cb
+        //lda $03ec
 	//cmp #$11        // key 'A' (left)
 	//bne l17d8
 	lda $028d       // SHIFT key pressed?
@@ -669,11 +717,19 @@ l17d8	lda $911f       // joystick left or fire?
 	and #$30
 	bne l1807
 l17df	jsr undraw_player // --- trigger jump to the left ---
-	lda $00         // moving one row up and one col to the left
+        jsr get_player_xoff
+        cmp #$00        // currently in col 0?
+        bne l17f0
+        lda $00
+	sec             // col-1 will wrap -> subtract one row less from pos
+	sbc #$01
+	bcc l17f3
+	bcs l17f4
+l17f0	lda $00         // moving one row up and one col to the left
 	sec
 	sbc #$17
 	bcs l17f4
-	dec $01
+l17f3	dec $01
 l17f4	sta $00
 	lda #$0e
 	jsr draw_player
@@ -684,7 +740,7 @@ l17f4	sta $00
 l1807   lda $0347       // player moving right?
 	cmp #$01
 	bne l184f
-        //lda $cb
+        //lda $03ec
 	//cmp #$29        // key 'S' (right)
 	//bne l1814
 	lda $028d       // SHIFT key pressed?
@@ -699,11 +755,19 @@ l1814	lda $911f       // joystick fire button?
 	and #$80
 	bne l184f
 l1827   jsr undraw_player  // --- trigger jump to right ---
-	lda $00         // moving one row up and one to the right
+        jsr get_player_xoff
+        cmp #$16-1
+        bcc l1830
+        lda $00
+	sec             // col+1 will wrap -> subtract 2 rows
+	sbc #$16*2-1
+	bcc l1831
+	bcs l183c
+l1830	lda $00         // moving one row up and one to the right
 	sec
 	sbc #$16-1
 	bcs l183c
-	dec $01
+l1831	dec $01
 l183c	sta $00
 	lda #$0f
 	jsr draw_player
@@ -711,7 +775,13 @@ l183c	sta $00
 	sta $0347
 	jmp l1e0d
 
-l184f	lda $cb
+l184f	lda $0348       // on ladder
+        beq l1851
+        lda $0346
+        cmp #$0a        // yes -> allow left/right only on middle part of ladder
+        bne l187f
+
+l1851	lda $03ec
 	cmp #$11        // key 'A' (note: allow SHIFT being pressed already)
 	beq l1861
 	lda $911f       // joystick left?
@@ -728,7 +798,7 @@ l186c	dec $00
 	jsr draw_player
 	jmp l1e0d
 
-l18ba	lda $cb
+l18ba	lda $03ec
 	cmp #$29        // key 'S' (note: allow SHIFT being pressed already)
 	beq l18d6
 	lda #$7f
@@ -755,7 +825,7 @@ l18f2	lda #$0f
 	sta $0347
 	jmp l1e0d
 
-l187f	lda $cb
+l187f	lda $03ec
 	cmp #$09        // key 'W' (up)
 	beq l188c
 	lda $911f       // joystick up?
@@ -766,7 +836,8 @@ l188c	lda $0346       // check char below player
 	beq l1897
 	cmp #$05        // base with ladder?
 	bne l193d       // neither -> stop climbing
-l1897	sta $0348       // --- climbing ---
+l1897	lda #$01        // --- climbing up ---
+        sta $0348
         jsr undraw_player
 	lda $00         // move player up one row
 	sec
@@ -778,7 +849,7 @@ l18a5	sta $00
 	jsr draw_player
 l18b3   jmp l1e0d
 
-l1903	lda $cb
+l1903	lda $03ec
 	cmp #$21        // key 'Z' (descend ladder)
 	beq l1910
 	cmp #$0b        // key 'Y': equiv. 'Z' for German keyboard
@@ -792,7 +863,8 @@ l1910	ldy #$16        // read char one row below player
 	beq l191e
 	cmp #$05
 	bne l193d       // neither -> stop climbing
-l191e	sta $0348       // start descending
+l191e	lda #$01        // --- climbing down ---
+        sta $0348
 	jsr undraw_player
 	lda $00         // move player one row down
 	clc
@@ -800,26 +872,34 @@ l191e	sta $0348       // start descending
 	bcc l192f
 	inc $01
 l192f	sta $00
-	lda #$0d        // draw player; climbing form
-	jsr draw_player
-        jmp l1e0d
-l193d   ldy #$00        // stop climbing when no ladder in moving direction
+        lda #$0d        // draw player; climbing form
+        jsr draw_player
+
+        ldy #$16        // check char one row below player
+        lda ($00),y
+        cmp #$06+1      // any kind of base?
+        bcs l1930
+l193d   ldy #$00        // stop climbing
 	sty $0348       // clear ladder status
-	lda #$0c        // change player figure to "normal"
+	lda #$0c        // change already drawn player figure to "normal"
 	sta ($00),y
         jsr activate_snake_player
-        jmp l1e0d
+l1930   jmp l1e0d
 
-l1944	lda $cb
+l1944	lda $03ec
 	cmp #$27        // key F1?
 	beq l1951
 	lda $911f       // joystick xxx?
 	cmp #$5e
 	bne l196e
-l1951	lda $0346
+l1951	lda $0348       // player climbing up/down ladder?
+        bne l196e       // yes -> do not allow jump
+        lda $0346
 	cmp #$0a        // ladder behind player?
-	beq l196e
+	bne l1958
+        jmp l1897       // yes -> handle equiv. regular "up" movement
 l1958	jsr undraw_player
+                        // FIXME in top level allow only one row to avoid bumping into base
 	lda $00         // move player up by 2 rows
 	sec
 	sbc #$2c
@@ -830,8 +910,8 @@ l1963	sta $00
 	jsr draw_player
 	jmp l1e0d
 
-l196e	lda $cb
-        cmp $03df       // skip if key not released in-between
+l196e	lda $03ec
+        cmp $03df       // skip if F7 key not released since last processed
         beq l196f
 	cmp #$3f        // key F7?
 	beq l197e
@@ -861,7 +941,7 @@ l197e	ldy #$17        // check if player at home:
 	cmp $0346
 	bne l19ae       // no -> abort
 	ldy #$00
-        sta ($08),y     // delete home
+        sta ($08),y     // delete home (FIXME do not delete snake char; delete home from snake background)
 	iny
 	sta ($08),y
 	iny
@@ -1275,7 +1355,7 @@ l1d90   cmp #$1e        // is fire hit by stone?
 	ldy #$2c        // yes -> nearly extinguish fire
 	lda #$b2        // set fire counter to '2'
 	sta ($0a),y
-	lda #$ff        // manipulate timer to make fire counter decrement immediately (FIXME)
+	lda #$ff        // manipulate timer to make fire counter decrement immediately
 	sta $034a
 	bne l1de0       // end stone fall
 
@@ -1367,11 +1447,13 @@ l1e0d
 	lda $0348       // player on ladder?
 	beq l1e2f
 	lda $0346       // check char behind player
-	cmp #$20
-	bne l1e2f
+	cmp #$05
+        beq l1e2f
+	cmp #$0a
+	beq l1e2f
 	ldy #$00
 	sty $0348       // blank -> clear ladder status
-	lda #$0c        // change player figure to "normal"
+	lda #$0c        // redraw player figure as "normal"
 	sta ($00),y
         jsr activate_snake_player
 
@@ -1398,18 +1480,34 @@ l1e44   cmp #$11        // player moved into any part of a snake?
 	jmp post_game   // death by snake bite
 
 l1e50                   // --- end player status // next: timer actions ---
-        lda $cb
-        sta $03df       // remember last pressed key for filtering
+        lda $03ec
+        sta $03df       // remember last processed key for filtering
 
 	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
 	sta $9122
 
-        ldy #$40        // time delay
-l1e0f	ldx #$ff
-l1e11	dex
-	bne l1e11
-l1e14	dey
-	bne l1e0f
+        sec             // --- time delay ---
+        lda $a2         // initially calc delta of full 24 bit counter
+        sbc $03ea       // discarding result of MSB delta
+        lda $a1
+        sbc $03e9
+        bne l1e10       // delta more than 256 -> skip delay loop
+        lda $a0
+        sbc $03e8
+        bne l1e10
+l1e0f   lda $a2         // delay loop: poll clock counter
+        sec
+        sbc $03ea
+        cmp #$05        // ignore underflow - LSB delta valid anyway
+        bcc l1e0f
+l1e10   sei             // disable interrupts to get consistent values
+        lda $a0         // take new copy of clock counters
+        sta $03e8
+        lda $a1
+        sta $03e9
+        lda $a2
+        sta $03ea
+        cli
 
         lda $0345       // message timer running?
         beq l1e59
@@ -2131,6 +2229,27 @@ l2327	tya
         rts
 
 // ----------------------------------------------------------------------------
+//                      // Sub-function to calculate column index of the player figure
+//                      // Parameter: implicit $00-$01
+//                      // Side-effect: invalidates Y
+//                      // Result: A := player address % 22
+
+get_player_xoff
+        lda $01         // player address MSB
+        sec
+        sbc #$10        // minus MSB of screen base address
+        tay
+        lda $00
+l2332	sec             // loop: subtract 22 until MSB negative
+l2331	sbc #$16
+	bcs l2331
+	dey
+	bpl l2332
+	//clc
+	adc #$16        // undo last subtraction
+        rts
+
+// ----------------------------------------------------------------------------
 //                      // Sub-function for adding points to score and display
 //                      // Parameter: A = number of points to be added in BCD
 add_score
@@ -2335,9 +2454,15 @@ l2411   lda #$00
 
 
 // ----------------------------------------------------------------------------
-//                      // Replace hook for keyboard interrupts with dummy
+//                      // Hook for keyboard presses
 
 key_int
-        rts
+        lda $cb         // code of last key read during interrupt
+        cmp #$40        // any key pressed?
+        beq l2520
+        cmp $03df       // filter last processed key (i.e. key still pressed) to avoid introducing bouncing/echo
+        beq l2520
+        sta $03eb
+l2520   rts
 
 // ----------------------------------------------------------------------------
