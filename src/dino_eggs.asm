@@ -51,11 +51,11 @@ _start_data = $1240
 
 // variables
 // $00-$01: player address
-// $02-$03: snake address (left/tail), temp copy of $0358-$0359
+// $02-$03: snake address, temp copy of $0358-$0359
 // $04-$05: -unused-
 // $06-$07: -unused-
 // $08-$09: beam station
-// $0a-$0b: stone
+// $0a-$0b: falling stone address, temp copy of $03e4-$03e5
 // $0c-$0d: -unused-
 // $0e-$0f: address dino foot
 // $10-$11: temp pointer
@@ -80,8 +80,8 @@ _start_data = $1240
 // $0350-$0351: address digit char under fire #2
 
 // $0352: snake status: 0=inactive; 1=coiled up; 2,3=moving v1,v2
-// $0353: snake Y offset
-// $0358,$0359: snake address
+// $0353: snake X-offset
+// $0358,$0359: snake address address of col #0 in row (i.e. always add $0353)
 // $035e,$035f: snake char under tail,head / timer until uncoiling LSB/MSB
 // $0364,$0365: snake color under tail,head
 
@@ -92,6 +92,11 @@ _start_data = $1240
 //                mask $40: power gain
 //                mask $80: ladder <-> blocked for content
 // $03de: temporary
+// $03df: prev_keypress
+// $03e0: stone-fall: state 0=none, 1=start, 2=fall
+// $03e1: stone-fall: content below stone
+// $03e4-$03e5: stone-fall: address (meaning varies with state)
+// $03e2,...,$03e67: words $03e0,$03e4 are arrays [2]
 
 
 // address of levels on screen:
@@ -473,6 +478,8 @@ l1638	sta $0340,x
 	lda #$00        // invalidate MSB fire address #1 and #2
 	sta $034f
 	sta $034f+2
+        sta $03e0       // initialize falling stone state
+        sta $03e2
 
 	ldx #$04        // initialize snake addresses
 l164f   lda l1240+2,x   // base address
@@ -824,11 +831,13 @@ l1963	sta $00
 	jmp l1e0d
 
 l196e	lda $cb
+        cmp $03df       // skip if key not released in-between
+        beq l196f
 	cmp #$3f        // key F7?
 	beq l197e
 	cmp #$20        // space key? (added for emulator)
 	beq l197e
-l1974	lda $911f       // joystick xxx?
+l196f   lda $911f       // joystick xxx?
 	and #$28
 	beq l197e
 	jmp l1e08       // to "player no action"
@@ -962,7 +971,8 @@ l1b52	jmp l1e0d
 
 l1b55	cmp #$02        // base with stone?
 	bne l1a23
-	jmp l1d08       // to stone fall
+        jsr start_stone_fall
+	jmp l1e0d
 
                         // --- F7 to drop carried egg or wood? ---
 l1a23	cmp #$00        // empty base under player?
@@ -1075,12 +1085,12 @@ l1c00	.byt $ff,$88,$55,$22,$00,$00,$00,$00    // #$00: Base
         .byt $00,$00,$00,$00,$02,$05,$08,$08    // #$14: snake v2 tail (left)
         .byt $00,$00,$00,$07,$07,$08,$90,$60    // #$15: snake v2 head (right)
 	.byt $00,$00,$00,$00,$1c,$2a,$51,$43    // #$16: stone upper half (w/o base)
-	.byt $51,$64,$49,$54,$40,$6a,$54,$41    // #$17: dino foot mid/left
+	.byt $21,$24,$29,$24,$20,$2a,$24,$21    // #$17: dino foot mid/left
 	.byt $20,$8a,$40,$09,$a0,$15,$40,$15    // #$18: dino foot mid/mid
-	.byt $82,$22,$42,$12,$42,$02,$a2,$02    // #$19: dino foot mid/right
-	.byt $64,$4a,$60,$50,$40,$41,$41,$3e    // #$1a: dino foot low/left
-	.byt $42,$15,$80,$00,$00,$01,$81,$70    // #$1b: dino foot low/mid
-	.byt $42,$12,$82,$02,$02,$02,$82,$7c    // #$1c: dino foot low/right
+	.byt $84,$24,$44,$14,$44,$04,$a4,$04    // #$19: dino foot mid/right
+	.byt $20,$60,$d0,$d0,$c8,$67,$70,$00    // #$1a: dino foot low/left
+	.byt $40,$8a,$40,$00,$00,$c7,$7c,$00    // #$1b: dino foot low/mid
+	.byt $44,$14,$44,$14,$06,$8e,$fe,$00    // #$1c: dino foot low/right
 l1ce8	.byt $aa,$00,$55,$00,$aa,$00,$55,$00    // #$1d: home - ROR'ed at run-time
 l1cf0	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1e: fire - written/toggled at run-time
 	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1f: UNUSED
@@ -1109,43 +1119,72 @@ l1cf0	.byt $00,$00,$00,$00,$00,$00,$00,$00    // #$1e: fire - written/toggled at
 l1ca8_0 .byt $08,$28,$69,$b9,$7f,$3c,$18,$7e    // #$1e: fire v1
 l1ca8_1 .byt $00,$00,$14,$59,$3a,$3c,$18,$7e    // #$1e: fire v2
 
-// snake tail+head (v2)  (v1)
-// ........|........     ........|........      .....xxx
-// ........|........     ........|........      .....xxx
-// ........|........     ........|........      .....x..
-// ........|.....xxx     ........|.xxx....      .xxxx...
-// ......x.|.....xxx     ........|.xxx....      x.......
-// .....x.x|....x...     ..xx....|x.......      .xxxxxx.
-// ....x...|x..x....     .x..x..x|........      .......x
-// ....x...|.xx.....     x....xx.|........      xxxxxxx.
+// snake: tail+head (v1) (v2)                   coiled
+// ........|........    ........|........       .....xxx
+// ........|........    ........|........       .....xxx
+// ........|........    ........|........       .....x..
+// ........|.xxx....    ........|.....xxx       .xxxx...
+// ........|.xxx....    ......x.|.....xxx       x.......
+// ..xx....|x.......    .....x.x|....x...       .xxxxxx.
+// .x..x..x|........    ....x...|x..x....       .......x
+// x....xx.|........    ....x...|.xx.....       xxxxxxx.
 
+// Dino foot (claw)
+// ..x....x|..x.....|x....x..
+// ..x..x..|x...x.x.|..x..x..
+// ..x.x..x|.x......|.x...x..
+// ..x..x..|....x..x|...x.x..
+// ..x.....|x.x.....|.x...x..
+// ..x.x.x.|...x.x.x|.....x..
+// ..x..x..|.x......|x.x..x..
+// ..x....x|...x.x.x|.....x..
+
+// ..x....x|xx......|.x...x..
+// .xx...x.|x...x.x.|...x.x..
+// xx.x...x|.x......|.x...x..
+// xx.x....|........|...x.x..
+// xx..x...|........|.....xx.
+// .xx..xxx|xx...xxx|x...xxx.
+// .xxx....|.xxxxx..|xxxxxxx.
+// ........|........|........
+
+// perl -pe 'tr /\.x\|/01 /d;s/([01]{8})/sprintf("\$%02x,", oct("0b$1"));/ge;'
 
 // ----------------------------------------------------------------------------
 //                      // Stone fall
 
-// FIXME falling is done within "busy loop", but
-//       should be async to allow concurrent player & snake movement
+l1d08   ldx #$00
+l1d09   lda $03e0,x
+        bne l1d01
+        jmp l1dee
 
-l1d08	lda $00         // determine which base/level player is on
-	sta $0a         // address of stone while falling
-	lda $01
+l1d01   stx $fa
+        lda $03e4,x
+	sta $0a
+        lda $03e5,x
 	sta $0b
-l1d10   lda $00         // --- start loop for falling stone ---
+
+        lda $03e0,x
+        cmp #$01
+        bne l1d02
+        lda $0a         // --- start loop for falling stone ---
 	sta $10         // temp copy of address for sub-function
-        lda $01
+        lda $0b
 	sta $11
         jsr get_base_idx_and_xoff
         bcs l1d11
-        jmp l1e0d       // abort if player is not directly above a base (should never happen)
+        ldx $fa
+        lda #$00
+        sta $03e0,x
+        jmp l1dee       // abort if player is not directly above a base (should never happen)
 l1d11   tay
-	sty $fa         // backup Xoff in level equiv. pos. in egg directory
-        stx $fb         // backup base level index * 2
 	lda l1250,x
 	sta $10
 	lda l1250+1,x
 	sta $11
 	lda ($10),y     // query egg directory for content previously hidden by stone
-        sta $fc         // backup result
+        ldx $fa
+        sta $03e1,x     // store result
         cmp #$40
         bcc l1d40
 	lda #$04        // char for base with power-gain
@@ -1171,14 +1210,14 @@ l1d4d	ldy #$16
 	lda #$09        // draw lower half of stone
 	sta ($0a),y
 
-l1d63	ldy #$30        // time delay
-l1d65	ldx #$ff
-l1d67	dex
-	bne l1d67
-        dey
-	bne l1d65
+l1d63   lda #$02        // continue stone-fall in next iteration
+        sta $03e0,x
+        jmp l1dec
 
-	lda $fc         // query egg directory again for drawing row below base
+l1d02   cmp #$02        // --- second stage: stone two rows below base ---
+        bne l1dd0
+
+	lda $03e1,x     // query egg directory again for drawing row below base
 	cmp #$40        // power gain?
         bcc l1d70
         lda #$0b        // char for lower half of power gain
@@ -1192,13 +1231,27 @@ l1d7b	lda #$20        // blank char
 l1d7d	ldy #$2c        // stone address + 2 rows
 	sta ($0a),y
 
-	lda $0a
+	lda $0a         // address of upper-half of stone
 	clc
 	adc #$42
 	bcc l1d8a
 	inc $0b
 l1d8a	sta $0a
-l1d8c	ldy #$00        // start loop
+        lda #$03        // fall-through to third stage
+        sta $03e0,x
+        bne l1d8c
+
+l1dd0	ldy #$00        // --- third stage: stone 3 or more rows below ---
+        lda #$20
+	sta ($0a),y     // remove upper half of stone
+	lda $0a         // move stone pointer one row down
+	clc
+	adc #$16
+	bcc l1dd3
+	inc $0b
+l1dd3	sta $0a
+
+l1d8c	ldy #$00
 	lda ($0a),y     // read char below new base
 	cmp #$09        // is lower half of stone?
 	beq l1dac
@@ -1213,6 +1266,7 @@ l1d8c	ldy #$00        // start loop
         lda $0b
         sta $11
         jsr stomp_snake_addr
+        ldx $fa
         bcs l1d8c       // check char below snake again
         bcc l1de0       // no snake matched (should never be reached)
 
@@ -1233,24 +1287,7 @@ l1dac	lda #$16        // draw upper half of stone
 	bne l1dbc
 	lda #$09        // yes -> draw lower half of stone
 	sta ($0a),y
-
-l1dbc	ldy #$50        // time delay
-l1dbe	ldx #$ff
-l1dc0	dex
-	bne l1dc0
-	dey
-	bne l1dbe
-
-	lda #$20        // remove upper half of stone
-	sta ($0a),y
-	lda $0a         // move stone pointer one row down
-	clc
-	adc #$16
-	bcc l1dd3
-	inc $0b
-l1dd3	sta $0a
-	clc
-	bcc l1d8c       // continue loop (falling stone)
+l1dbc	jmp l1dec       // continue stone fall in next iteration
 
 l1dd8   lda $0a         // undo last subtraction: pointer into row above base
 	sec
@@ -1259,9 +1296,10 @@ l1dd8   lda $0a         // undo last subtraction: pointer into row above base
 	dec $0b
 l1dd9	sta $0a
 
-        lda $fc         // check egg directory of row above
+        lda $03e1,x     // check egg directory of base/level above
         and #$ff-$10    // anything below stone?
         bne l1de0
+        // FIXME enable this after changing egg placement to be less distributed
 	//jsr $e094       // get RAND number: randomly spawn snake on this level
 	//lda $8d
         //cmp #64         // probability 64/256 ~ 25%
@@ -1274,12 +1312,44 @@ l1dd9	sta $0a
         bcc l1de0
         jsr spawn_snake
 
-l1de0   ldy #$16
+l1de0   ldx $fa
+        ldy #$16
         lda ($0a),y
 	cmp #$02        // stone hit base with stone?
-	bne l1dec
-	jmp l1d10       // continue stone fall at current position
-l1dec	jmp l1e0d
+	bne l1de1
+        lda #$01        // yes -> new stone fall at current position
+        bne l1de2
+l1de1   lda #$00        // no -> end stone fall
+l1de2   sta $03e0,x
+
+l1dec	lda $0a
+        sta $03e4,x
+        lda $0b
+        sta $03e5,x
+l1dee	inx
+        inx
+        cpx #$02+1      // next falling stone
+        bcs l1def
+        jmp l1d09
+l1def   jmp l1700
+
+start_stone_fall
+        ldx #$00
+l1df0   lda $03e0,x
+        bne l1df1
+        lda $00         // store start address, equal player address
+	sta $03e4,x
+	lda $01
+	sta $03e5,x
+        lda #$01
+        sta $03e0,x
+        rts
+l1df1   inx
+        inx
+        cpx #$02+1
+        bcc l1df0
+        rts
+
 
 // ----------------------------------------------------------------------------
 //                      // --- player status handling ---
@@ -1328,6 +1398,11 @@ l1e44   cmp #$11        // player moved into any part of a snake?
 	jmp post_game   // death by snake bite
 
 l1e50                   // --- end player status // next: timer actions ---
+        lda $cb
+        sta $03df       // remember last pressed key for filtering
+
+	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
+	sta $9122
 
         ldy #$40        // time delay
 l1e0f	ldx #$ff
@@ -1335,9 +1410,6 @@ l1e11	dex
 	bne l1e11
 l1e14	dey
 	bne l1e0f
-
-	lda #$ff        // configure $9120 for input (i.e. allow querying if joystick right)
-	sta $9122
 
         lda $0345       // message timer running?
         beq l1e59
@@ -1529,7 +1601,7 @@ l1fa0	lda #18         // start iteration for foot lowering: MAX to row of lowest
         lda $0e         // backup Xoff of foot (left side)
         sta $fb
 l1faa	ldy #$09
-l1fb0	lda l1346,y     // foot pattern (lower row, i.e. sole of foot)
+l1fb0	lda l133c,y     // foot pattern (higher row, i.e. middle part)
 	sta ($0e),y     // foot +1 row
 	dey
 	bpl l1fb0
@@ -1559,7 +1631,7 @@ l1fce	lda ($0e),y
 	bcs l1fde
 	lda #$00        // yes -> player dead
 	sta $01
-l1fde	lda l133c,y     // foot pattern (higher row, i.e. middle part)
+l1fde	lda l1346,y     // foot pattern (lower row, i.e. sole of foot)
 	sta ($0e),y
         lda #$01        // color: white
 	sta ($10),y
@@ -1650,9 +1722,7 @@ l206e	sta $1000,x
 	jmp l2100
 
 // ----------------------------------------------------------------------------
-// fill up to next segment
-.dsb $2100 - *, $ea
-* = $2100
+//                      // Snake driver
 
 // $0352: snake status: 0=inactive; 1=coiled up; 2,3=moving v1,v2
 // $0353: snake Y offset
@@ -1756,6 +1826,10 @@ l2104
 	bcc l2112
 l2109   cmp #$1e        // reached burning fire?
         beq l2111       // yes -> coil up to left of fire
+        cmp #$09        // hit falling stone? (lower half)
+        beq l2111
+        cmp #$16        // hit falling stone? (upper half)
+        beq l2111       // yes -> wait here until stone has passed (simplification; moving objects shall never cross paths)
         sta $035f,x     // no -> new pos OK, store bg char
         lda ($10),y
         sta $0365,x
@@ -1805,7 +1879,7 @@ l2102   dex
         bmi l2103
         jmp l2101
 
-l2103	jmp l1700
+l2103	jmp l1d08
 
 //                      // Parameter: A:=Xoff (col index in row above base)
 //                      //            X:=snake index
@@ -2255,11 +2329,14 @@ l2415   lda $cb         // wait for key release
         cmp #$40
         bne l2415
         jmp $e518
-l2411   jmp l1400       // restart from scratch
+l2411   lda #$00
+        sta $c6
+        jmp l1400       // restart from scratch
 
 
 // ----------------------------------------------------------------------------
 //                      // Replace hook for keyboard interrupts with dummy
+
 key_int
         rts
 
