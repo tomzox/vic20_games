@@ -66,14 +66,9 @@ _start_data = $123d
 // $0a:        snake direction (temporary copy of l03a6)
 
 // $22-$25     temporary during sub-functions
-// $4b-$4c     temporaries during snake handler
+// $4b-$4c     temporaries during snake handler et.al.
 // $fb:        warm boot flag (temporary during restart)
 // $fc-$fe     -unused-
-
-// FIXME sound:
-// - small noise when crossing excrement
-// - tone when rejecting movement due to zero skill
-// - longer tone going doen after death; opposite upon rebirth
 
 // ----------------------------------------------------------------------------
 // Initialized data
@@ -140,7 +135,7 @@ l12ba   .byt $50,$12,$05,$13,$13,$20,   // "Press any key"
 * = $1400
 
 init_game
-	lda #$00
+	lda #$00        // mute sound
 	sta $900e
 	lda #$19        // set screen bg colors: screen:white border:white
 	sta $900f
@@ -355,7 +350,7 @@ l178f	sta $1000+22*22,x
 
 l1793	lda $fb         // warm boot -> init or restore score respectively
 	bne l17a4
-	lda #$26        // init delay factor
+	lda #$60        // init delay factor
 	sta v_game_speed
 	sty v_plr_score   // init score to 0
 	sty v_plr_score+1
@@ -403,17 +398,27 @@ l17de	lda l12c0-1,x   // print "Race to start" message
 	bne l17de
 
 	sty v_plr_bonus_cnt // initialize count of picked-up letters
+        sty v_plr_sound
 
         lda #$40        // initialize keypress buffers
         sta v_key_prev
         sta v_key_next
+
+        sei             // disable interrupts to get consistent values
+        lda $a0         // initial copy of clock counter
+        sta v_timestamp
+        lda $a1
+        sta v_timestamp+1
+        lda $a2
+        sta v_timestamp+2
+        cli
 
         // end game init -> enter main loop
         jmp l17ea
 
 // ----------------------------------------------------------------------------
 // Player control: React on player input
-// (This function is start of the jump chain building the main loop.)
+// - This function is start of the jump chain building the main loop
 
 l17ea   sei
         lda v_key_next  // any key-press detected since action handler?
@@ -427,14 +432,12 @@ l17eb   sta v_key_cur   // buffer for following processing
 
 	lda v_plr_dead  // player still alive?
 	beq l17f1
-	cmp #$60
-	beq l17f0
-	jmp l1af2       // player dead -> to defeat handler
-l17f0   jmp l1e67       // player eating snake
-        //jmp l1ac1     // -> place player
-        //jmp l1aed     // -> skip placing player
+	cmp #$60        // player eating snake?
+	bne l17f0
+        jsr player_eating_snake
+l17f0   jmp l1af2       // dead or eating snake -> skip input handling
 
-l17f1	lda #$ff
+l17f1	lda #$ff        // prepare HW for reading joystick status
 	sta $9122
 	lda v_key_cur   // poll for keypress
 	cmp #$09        // key 'w'?
@@ -518,31 +521,37 @@ l188a	lda $25
 	bne l1893
 	jsr check_player_pos
 	bcc l1857
+        // fall-through
 
 // ----------------------------------------------------------------------------
-// Player status updates
+// Player status updates after movememnt
+// - part of main loop (jump chain)
 
-l1893	
-        sty v_plr_face  // reset player face: closed/not eating
-	lda v_plr_ready // player ready?
-	beq l18c9       // no -> do not score for eating food
-	lda ($03),y     // read char under player figure
-	cmp #$19        // "food" char?
-	bne l18c9
-	lda #$10        // score +10
-	ldx #$00
-	jsr add_score
-	sta v_plr_face  // player face: open/eating
+l1893	lda ($03),y
+        sta $4b         // backup char at new player position
 
-l18c9	lda v_plr_ready // player "ready"?
-	bne l1904       // yes -> skip obsolete check for home position
-        lda $03         // at player position?
+	cmp #$08        // snake head at new player pos?
+	bcs l1915
+        lda #$f0        // yes -> mark player dead
+	sta v_plr_dead
+        lda #$04
+        jsr add_sound
+        jmp l1af2       // to defeat handler (no other actions allowed anymore)
+
+l1915	lda $4b         // not dead -> draw player figure at new position
+        sec
+        sbc #$19        // pass 0 when foot is being eaten
+        jsr draw_player
+
+	lda v_plr_ready // player "ready"?
+	bne l1920       // yes -> skip obsolete check for home position
+        lda $03         // is player at address of "target" char?
         cmp #<$1112     // (note not reading char to allow detection while riding snake tail)
-        bne l1904
+        bne l1920
         lda $04
         cmp #>$1112
-        bne l1904
-	lda #$01        // matching address -> mark player as ready
+        bne l1920
+	lda #$01        // address is matching -> mark player as ready
 	sta v_plr_ready
 	ldx #$0f        // print "good luck" message (replacing "Race to start" message)
 l18cc	lda l12cc-1,x
@@ -552,28 +561,22 @@ l18cc	lda l12cc-1,x
 	dex
 	bne l18cc
 	lda v_plr_skill // any skill left? (implies initial skill <10, else BCD conversion req'ed here)
-	beq l1900
+	beq l18ce
 	tax             // add skill * 100 points to score
         tya
 	jsr add_score
-l1900	lda #$04        // initialize skill to 4 ("level II")
+l18ce	lda #$04        // initialize skill to 4 ("level II")
 	sta v_plr_skill
         jsr print_skill
-        // fall-through
+        lda #$02
+        jsr add_sound
+        jmp l19b1
 
-l1904	lda ($03),y     // read char under player
-	cmp #$08        // snake head?
-	bcs l1915
-l190c	lda #$f0        // kill player
-	sta v_plr_dead
-	lda #$d8        // sound effect
-	sta $900c
-        jmp l1af2
-
-l1915	cmp #$12        // hit snake tail? (#$12-#$15)
-	bcc l196b
-	cmp #$16
-	bcs l196b
+l1920   lda $4b
+        cmp #$12        // hit snake tail? (#$12-#$15)
+	bcc l18d0
+	cmp #$15+1
+	bcs l18d0
 	lda v_plr_ready // yes; player ready?
 	beq l195d
 	lda $028d       // yes; SHIFT key or joystick FIRE pressed?
@@ -582,20 +585,32 @@ l1915	cmp #$12        // hit snake tail? (#$12-#$15)
 	and #$20
 	bne l195d       // neither -> ride tail, but do not eat
 l192d   jsr start_eating_snake
-        bcc l19a0
+        bcc l192f
 	lda #$60        // change player status to "eating snake"
 	sta v_plr_dead
-	bne l19a0
-l195d	lda #$07        // score +7
+l192f   jmp l1af2       // no further status changes allowed
+
+l195d	lda #$07        // riding tail (without eating): score +7
 	ldx #$00
 	jsr add_score
-	clc
-	bcc l19a0       // always true
+        lda #$01
+        jsr add_sound
+	jmp l19a0
 
-l196b   lda v_plr_ready // player ready?
-	beq l19a0       // no -> ignore eating apple or snake symbols
-	lda ($03),y
-	cmp #$1f        // found apple?
+l18d0	lda v_plr_ready // ---- handling actions allowed only when player ready ----
+        beq l19b1
+	lda $4b         // check char under player figure
+	cmp #$19        // "food" char?
+	bne l18c9
+	lda #$10        // score +10
+	ldx #$00
+	jsr add_score
+        lda #$01
+        jsr add_sound
+        clc
+        bcc l19a0
+
+l18c9	cmp #$1f        // found apple?
 	bne l1990
         ldx #$02        // yes: grant 250 points
 	lda #$50
@@ -613,34 +628,37 @@ l1990	cmp #$1e        // found snake grant symbol?
 l199d	inc v_plr_skill // increase skill +2
 	inc v_plr_skill
         jsr print_skill
+        lda #$02
+        jsr add_sound
 
-l19a0   lda v_game_time // time score
-	asl
-	asl
-	asl
-	asl
-	bne l19a1       // only once per 16 iterations
+l19a0   lda v_game_time // score for spent time while snakes alive
+	and #$0f
+	bne l19b1       // only once per 16 iterations
 	lda v_snk_cnt   // any snakes alive?
-	beq l19a1
+	beq l19b1
 	asl             // yes -> score +2 for each living snake
-        ldx #$00
+        cmp #10
+        bcc l19a2
+        clc             // correct BCD overflow
+        adc #16-10
+l19a2   ldx #$00
 	jsr add_score
 
                         // ---- skill request handling ----
-l19a1	lda v_key_cur   // poll keyboard
+l19b1	lda v_key_cur   // poll keyboard
 	cmp #$07        // key INSERT? (added for emulator)
-        beq l19a2
+        beq l19b2
 	cmp #$06        // pound key? (skill demand)
 	bne l19d0
-l19a2	lda v_plr_skill
+l19b2	lda v_plr_skill
 	cmp #$02        // skill >= 2?
 	bcs l19d0       // yes -> disallow
 	lda v_plr_score+2  // check "MSB" of score digits
-	bne l19c2       // not 0, hence score >9999 -> OK
+	bne l19b3       // not 0, hence score >9999 -> OK
 	lda v_plr_score+1 // middle digit pair of score
 	cmp #$10        // >=10 (BCD)?
 	bcc l19c8       // no -> disallow
-l19c2   sed             // enable BCD arithmetics for adc/sbc
+l19b3   sed             // enable BCD arithmetics for adc/sbc
 	sec
 	lda v_plr_score+1 // subtract 1000 from score
         sbc #$10
@@ -684,47 +702,13 @@ l1a81	lda v_plr_skill // skill zero?
 	bne l1a9d
 	jmp game_end    // no -> update highscore & enter post-game
 l1a9d	dec v_plr_lives // yes; remove one life
-	jmp restart_game  // restart game, however keeping score
+	jmp restart_game  // restart game, however keeping score & live counter
+
+l1aa3   // fall-through
 
 // ----------------------------------------------------------------------------
-// Place player: Sound
-
-        // FIXME move sound triggers into handlers above; move player drawing to above
-l1aa3	lda ($03),y     // check char at player position
-	cmp #$1e        // grant symbol found?
-	bcc l1aae
-	lda #$be        // generate note 266Hz
-	sta $900c
-l1aae	cmp #$17
-	bcs l1ac1
-	cmp #$08
-	bcc l1af2       // player dead
-	lda #$8c        // generate note 123Hz
-	sta $900c
-
-l1ac1	lda $03         // calc color address of player
-	sta $22
-	lda $04
-	clc
-	adc #$84
-	sta $23
-	lda #$01        // color: white
-	sta ($22),y
-	lda v_plr_face  // player eating?
-	beq l1add
-	lda #$80        // generate noise
-	sta $900d
-	lda #$18        // char for player eating
-	bne l1adf
-l1add	lda #$17        // char for player not eating
-l1adf	sta ($03),y     // write player character
-	lda $900c
-	bne l1aed
-	lda $900d       // sound being emitted?
-	cmp #$f8
-	beq l1af2
-l1aed	lda #$0f        // yes -> set volume to max
-	sta $900e
+// Player defeat handler: player actions allowed while being dead or alive
+// - part of main loop (jump chain)
 
 l1af2	lda v_key_cur   // player defeating?
 	cmp #$27        // key F1? (added for emulator)
@@ -747,27 +731,18 @@ l1af8	lda ($03),y     // read char at player pos: snake still on top?
 	sta $1000+22*22,x
         lda #$07        // color: yellow
 	sta $9400+22*22,x
+        lda #$05
+        jsr add_sound
 
 l1b42   lda v_key_cur   // remember last processed key for filtering
         sta v_key_prev
 
-        // FIXME use clock instead of constant delay
-        ldy v_game_speed // ---- time delay (I) ----
-l1b44	ldx #$ff
-l1b46	dex
-	bne l1b46
-l1b49	dey
-	bne l1b44
-	ldy #$00
+        jsr handle_sound  // emit sound for previously recorded actions
 
-	sty $900c       // stop all sound
-	sty $900d
-	lda v_snk_cnt
-	beq l1b5e
-	lda #$f8        // noise for snakes
-	sta $900d
+        ldx #$00        // insert first half of time delay
+        jsr time_delay
 
-l1b5e	jmp l1c44       // to snake handler
+	jmp l1c44       // to snake handler
 
 
 // ----------------------------------------------------------------------------
@@ -786,13 +761,18 @@ l1310   inx
 
 // ----------------------------------------------------------------------------
 // Sub-function: Print skill counter value to the screen
-// - Parameters: none
-// - Side-effects: invalidates X
+// - Parameters: skill value in global variable
+// - Side-effects: limits value of skill variable to max. 99
+//                 invalidates X
 // - Results: none
 
 print_skill
         lda v_plr_skill // calculate skill%10 and skill/10
-	jsr div10
+        cmp #100        // limit value in case of overflow
+        bcc l1340       // (only 2 digits can be displayed)
+        lda #99
+        sta v_plr_skill
+l1340   jsr div10
         clc
 	adc #$30+$80    // add ROM char '0' to skill%10 digit
 	sta $1000+0*22+7
@@ -941,12 +921,41 @@ l13f7	sta $1000+22*22+6,x
 	ldx #$02        // increase score by 250
 	lda #$50
 	jsr add_score
+        lda #$02
+        jsr add_sound
 l13fa	sec             // return: allow
 	rts
 l1363	lda #$aa        // result = do not allow
 	sta $25
+        lda #$03
+        jsr add_sound
 	clc
 	rts
+
+// ----------------------------------------------------------------------------
+// Sub-function: Draw player figure
+// - Parameters: A: face selection: 0=closed; other:eating
+//               globals $03-$04: player address
+// - Side-effects: Overwrites $22-$23
+// - Results: none
+
+draw_player
+        cmp #$00        // player eating?
+	bne l1add
+	lda #$18        // char for player eating
+	bne l1adf
+l1add	lda #$17        // char for player not eating
+l1adf	sta ($03),y     // write player character
+
+	lda $03         // calc color address of player
+	sta $22
+	lda $04
+	clc
+	adc #$84
+	sta $23
+	lda #$01        // color: white
+	sta ($22),y
+        rts
 
 // ----------------------------------------------------------------------------
 // Sub-function: Clear player figure
@@ -980,14 +989,21 @@ l19eb	lda #$00
 	jsr add_score
 
 	lda v_plr_skill
-        asl             // add 200 points per remaining skill to score
-        adc #$02        // plus 250 points
+        beq l19ed
         tax
-        lda #$50
+        tya
+        sed             // use BCD add in loop as value may be as large as 2*99
+l19ec   clc             // start loop to add 100 score for each remaining skill point
+        adc #$02
+        dex
+        bne l19ec
+        cld
+l19ed   tax
+        lda #$00
 	jsr add_score
 
 	lda v_plr_lives
-	cmp #$03        // all three lives left?
+	cmp #$02        // all lives left?
 	bcs l1a64
 	inc v_plr_lives // no -> grant one live
 	bne l19f0
@@ -1012,7 +1028,8 @@ l1a1f	lda l1295-1,x
 	lda #$33+$80    // patch "BONUS" message: replace digit '2' with '3'
 	sta $1000+22*22+13
 
-l1a28   lda $a2         // time delay: 10 seconds
+l1a28   sty $900e       // switch off sound
+        lda $a2         // time delay: 10 seconds
         sta $22
         sty $23
         sty $24
@@ -1027,8 +1044,12 @@ l1a2e   lda $a2         // delay loop: read clock counter
         cmp #1          // 3*256 clock ticks ~= 12.8 seconds
         bcc l1a2e
 
-        dec v_game_speed   // reduce time delay factor ==> increase game speed
-	dec v_game_speed
+        lda v_game_speed  // reduce time delay factor ==> increase game speed
+	sec
+        sbc #$02
+        bcs l1a31
+l1a30   lda #$01
+l1a31	sta v_game_speed
         // fall-through
 
 // Side-entry point: Restart game with current score value
@@ -1162,6 +1183,35 @@ key_int
 l13f0   rts
 
 // ----------------------------------------------------------------------------
+// Sub-function for debug support: Print value as HEX to screen
+// - Parameters: $22-$23 output address
+//               Y: running offset: to be initialized to zero; incremented here
+//               A: value to be printed
+// - Side-effects: overwrites temporary $24
+//                 invalidates X
+// - Results: none
+
+#if 0
+hextab  .byt $b0,$b1,$b2,$b3,$b4,$b5,$b6,$b7,$b8,$b9,$81,$82,$83,$84,$85,$86
+prthex  sta $24
+        lsr
+        lsr
+        lsr
+        lsr
+        tax
+        lda hextab,x
+        sta ($22),y
+        iny
+        lda $24
+        and #$0f
+        tax
+        lda hextab,x
+        sta ($22),y
+        iny
+        rts
+#endif
+
+// ----------------------------------------------------------------------------
 // Sub-function for splitting screen for a fixed time
 // Can be used to switch between character sets between screen rows
 
@@ -1186,6 +1236,70 @@ lspl3	sta $9005
 	bcc lspl1
         rts
 #endif
+
+// ----------------------------------------------------------------------------
+// Sub-function: Inser time delay to reach a playable, but tunable speed
+//
+// The main part of delay is based on the interrupt-driven system clock,
+// so that it is independent of processing load caused by the game scenario.
+// However clock resolution is a bot coarse, so small delays are inserted
+// using classic busy loop.
+//
+// - Parameter: X flag =0: insert first half of delay; =1:remaining delay
+//   The parameter is intended so that delay can be inserted at multiple
+//   points in the main loop, so that execution is smoother.
+
+time_delay
+        lda v_game_speed
+        lsr
+        lsr
+        lsr
+        lsr
+        cpx #$00
+        bne l1e40
+        lsr
+l1e40   sta $4b         // expected main loop timing in 1/60sec
+        beq l1e50
+        sec
+        lda $a2         // initially calc delta of full 24 bit counter
+        sbc v_timestamp+2  // discarding result of MSB delta
+        lda $a1
+        sbc v_timestamp+1
+        bne l1e51       // delta more than 256 -> skip delay loop
+        lda $a0
+        sbc v_timestamp
+        bne l1e51
+l1e4f   lda $a2         // delay loop: poll clock counter
+        sec
+        sbc v_timestamp+2
+        cmp $4b         // ignore underflow - LSB delta valid anyway
+        bcc l1e4f
+
+l1e50   cpx #$00
+        beq l1e52
+
+        lda v_game_speed // "sub-clock" delay (i.e. for remainder at 1/16th of clock resolution)
+        and #$0f
+        beq l1e51
+        tay
+l1e60	ldx #255
+l1e62	dex
+	bne l1e62
+	ldx #211
+l1e63	dex
+	bne l1e63
+        dey
+        bne l1e60
+
+l1e51   sei             // disable interrupts to get consistent values
+        lda $a0         // take new copy of clock counters
+        sta v_timestamp
+        lda $a1
+        sta v_timestamp+1
+        lda $a2
+        sta v_timestamp+2
+        cli
+l1e52   rts
 
 // ----------------------------------------------------------------------------
 // User-defined characters
@@ -1412,6 +1526,7 @@ l1c42	clc             // result: not OK
 
 // ----------------------------------------------------------------------------
 // Snake main tick function
+// - part of main loop (jump chain)
 
 l1c44	ldx #$00        // start of loop across snakes
         stx $4c
@@ -1704,33 +1819,27 @@ l1e25	lda v_plr_dead
 	lda ($03),y     // read char at player position
 	cmp #$08        // replaced by snake head?
 	bcs l1e35
-	jmp l190c       // yes -> kill player
+        lda #$f0        // yes -> mark player dead
+	sta v_plr_dead
+        lda #$04
+        jsr add_sound
 
-l1e35	lda v_snk_cnt   // all snakes dead?
-	beq l1e4d       // yes -> skip sound
-	lda v_game_time
-	and #$04
-	beq l1e45
-	lda #$0f        // max volume
-	bne l1e47
-l1e45	lda #$08        // medium volume
-l1e47	sta $900e       // set volume
-	inc v_game_time // increment game time counter
+l1e35	inc v_game_time // increment game time counter
 
-l1e4d	ldy v_game_speed // time delay (II)
-l1e4f	ldx #$ff
-l1e51	dex
-	bne l1e51
-	dey
-	bne l1e4f
+        jsr handle_sound  // emit sound for previously recorded actions
+
+        ldx #$01        // insert time delay
+        jsr time_delay
 
 	jmp l17ea       // loop back to player actions
 
 // ----------------------------------------------------------------------------
-//                      // Tick function while player eating snake
+// Sub-function: Replaces player input actions while eating snake
+// - Parameters: none
+// - Results: none
 
-// FIXME change into sub-function
-l1e67	ldx v_snk_eat_seg
+player_eating_snake
+        ldx v_snk_eat_seg
 l1e6a	tya             // start loop: search if player address equal any other snake segment
 l1e6b	sta l0384,x
 	cpx v_snk_eat_inst
@@ -1767,19 +1876,6 @@ l1e98	ldx v_snk_eat_seg  // reached snake head?
 	lda l0384+1,x
 	sta $04
 
-	lda v_game_speed  // ---- time delay ----
-	sbc #$18
-	tay
-	beq l1ec1
-	cmp #$30
-	bcc l1ec3
-l1ec1	ldy #$01
-l1ec3	ldx #$ff
-l1ec5	dex
-	bne l1ec5
-	dey
-	bne l1ec3
-
 	lda #$81        // increase score by 81 per snake segment (1782 total)
         ldx #$00
 	jsr add_score
@@ -1795,18 +1891,18 @@ l1ed3	cpx v_snk_eat_inst
         lda l0384+1,x
         cmp $04
         bne l1ed3
+        beq l1eeb       // found -> skip drawing player figure
 
-        lda #$80        // found -> skip placing player char
-        sta $900d       // generate noise
-        jmp l1aed       // skip placing player
-
-l1eea   lda #$19        // not found -> set player face to open/eating
-        sta v_plr_face
-        jmp l1ac1       // place player
-
-l1ea7	sty v_plr_face  // done; switch player face to closed/not eating
+l1eea   lda #$00        // not found -> set player face to open/eating
+        jsr draw_player
+l1eeb   lda #$01        // add sound for player eating food
+        jsr add_sound
+        rts
+                        // --- snake completely eaten ---
+l1ea7	lda #$01        // switch player face to closed/not eating
+        jsr draw_player
 	sty v_plr_dead  // reset "eating" status to normal "alive" status
-	jmp l1ac1       // eating done ==> back to regular player status update
+	rts
 
 // ----------------------------------------------------------------------------
 // Sub-function: Identify & eat snake whose tail was bitten by player
@@ -1938,6 +2034,119 @@ l13b0	txa             // calc offset to next snake instance
 l13b4	rts
 
 // ----------------------------------------------------------------------------
+
+add_sound
+        cmp v_plr_sound
+        bcc l2110
+        sta v_plr_sound
+        sty v_plr_sound_idx
+l2110   rts
+
+// ----------------------------------------------------------------------------
+
+handle_sound
+        lda v_plr_sound
+        cmp #5          // ---- revive -----
+        bne l2124
+        lda v_plr_sound_idx
+        cmp #$8
+        bcc l2125a
+        jmp l2120
+l2125a  asl             // rising notes: 128 ... 240
+        asl
+        asl
+        asl
+        adc #$80        // 128 + 16*X
+	sta $900a
+        lda #$0d
+        sta $900e
+        inc v_plr_sound_idx
+        jmp l2130
+
+l2124   cmp #4          // ---- death -----
+        bne l2123
+        lda v_plr_sound_idx
+        cmp #$8
+        bcc l2124a
+        jmp l2120
+l2124a  asl             // falling notes: 240 ... 128
+        asl
+        asl
+        asl
+        eor #$ff        // calc 240 - 16*X
+        sec
+        adc #$f0
+	sta $900a
+        lda #$0d
+        sta $900e
+        inc v_plr_sound_idx
+        jmp l2130
+
+l2123	cmp #3          // ---- reject ----
+	bne l2122
+        ldx v_plr_sound_idx
+        cpx #$02
+        bcs l2120
+	lda #$92        // generate 1 deep note, 2 octaves
+	sta $900a
+	lda #$82
+	sta $900b
+        lda #$08
+        sta $900e
+        inc v_plr_sound_idx
+        bne l2130
+
+l2122	cmp #2          // ---- item (letter, apple, etc.) found ----
+	bne l2121
+        ldx v_plr_sound_idx
+        cpx #$04
+        bcs l2120
+        lda #$eb
+        sta $900b
+        lda #$0d
+        sta $900e
+        inc v_plr_sound_idx
+        bne l2130
+
+l2121	cmp #1          // ---- food ----
+	bne l2120
+        ldx v_plr_sound_idx  // duration is 1/2 tick
+        bne l2120       // (esp. in case player is picking up multiple food in sequence)
+	lda #$ce        // 1 low note, mid/low volume
+	sta $900a
+        lda #$06
+        sta $900e
+        inc v_plr_sound_idx
+        bne l2130
+
+l2120   lda #$00
+        sta v_plr_sound
+        sta $900a       // stop tones (except for noise generated by snake)
+        sta $900b
+        sta $900c
+
+l2130   lda v_snk_cnt
+	bne l2131
+        sta $900d       // no snakes
+        lda v_plr_sound
+        beq l2146       // neither player -> mute totally
+        bne l214f       // else: volume already set
+
+l2131   lda #$f8        // ---- adding snake sound ----
+        sta $900d
+        lda v_plr_sound // player sound active?
+        bne l214f       // yes -> volume controlled by player sound
+	lda v_game_time
+	and #$04
+	beq l2145
+	lda #$03        // low volume
+	bne l2146
+l2145	lda #$01        // very low volume
+l2146   sta $900e
+
+l214f   rts
+
+// ----------------------------------------------------------------------------
 // Variables
 
 v_plr_skill     .byt 0      // player skill/level
@@ -1947,9 +2156,12 @@ v_plr_face      .byt 0      // controls char used for player: open/closed mouth
 v_plr_score     .byt 0,0,0  // score in BCD (little endian)
 v_plr_lives	.byt 0      // counter of remaining player lives
 v_plr_bonus_cnt	.byt 0      // counter bonus letters picked-up by user
+v_plr_sound    	.byt 0      // sound to be played: 0=none 1=food 2=item 3=reject 4=death 5=revive
+v_plr_sound_idx	.byt 0      // sound playback index
 
+v_timestamp     .byt 0,0,0  // copy of system clock counters for calculating time delay/game speed
 v_game_time     .byt 0      // main loop counter (for timer purposes)
-v_game_speed    .byt $26    // factor for time delay in main loop
+v_game_speed    .byt 0      // factor for time delay in main loop
 v_key_prev      .byt $40    // previously processed key
 v_key_next      .byt $40    // next key, or $40 if none
 v_key_cur       .byt $40    // current key (temporary use during player actions)
