@@ -1,4 +1,4 @@
-//
+// ----------------------------------------------------------------------------
 // Copyright 1982-1984,2019 by T.Zoerner (tomzo at users.sf.net)
 // All rights reserved.
 //
@@ -21,29 +21,17 @@
 // ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-
 // ----------------------------------------------------------------------------
-// Description of memory layout:
-//
-// >>>>> Prerequisite: 8 kB memory extension at $2000 <<<<<
-//
-// $0000-$00ff: pointer variables; see description below
-// $0100-$01ff: stack
-//
-// $1000-$1225: screen buffer (extended to 25 rows * 22 columns)
-// $1240-$13ff: read-only data section
-// $1400-$1bff: code section, part 1
-// $1c00-$1d1f: user-defined characters (position restricted by HW/ROM)
-// $1dXX-$2fff: code section, part 2
 
-// ----------------------------------------------------------------------------
-// Main control flow:
-//
-// - $1400: game entry point from BASIC (SYS 5120)
-// - main loop: chain of "jmp" starting at l1700 -> l1e08/l1e0d -> l2100
-//   and finally back to tick_player
-// - game is ended via "rts"
+// Enhancement options:
+// - add snake eggs below bases, birthing snakes at random times
+// - add spiders crawling above top level, randomly lowering themselves to a level
+// - improve dino foot stomping by lifting one row and back
+//   OR make async and give player chance to escape
+//   OR replace by dino stampede through the level (3x3 chars each)
+// - add eggs piled above bases
+// - add sound effects
+// - increase difficulty level after won game (e.g. more/faster snake)
 
 // P00 header
 _start_data = $1240
@@ -100,6 +88,9 @@ _start_data = $1240
 // $03e8-$03ea: copy of $a0-$a2 (big-endian!)
 // $03eb: next keypress: $ff=invalid until peek($cb) != $40
 // $03ec: current keypress (used during player actions)
+// $03ed: current random number
+// $03ee: random number index
+// $03ef: temp variable used by rand function
 
 
 // address of levels on screen:
@@ -167,7 +158,7 @@ l1400	lda #$0e
 	lda #$32        // set screen height to 25 lines
 	sta $9003
 	jsr $e55f       // clear screen
-	jsr $e09b       // seed pseudo-random number generator (with VIA timer)
+        jsr init_rand_gen // seed random number generator
         lda #<key_int   // set dummy keyboard interrupt hook
         sta $028f
         lda #>key_int
@@ -178,6 +169,7 @@ l1419	lda l1240,x
 	sta $00,x
 	dex
 	bpl l1419
+
 	ldy #$15        // draw bases to all levels
 	lda #$00        // char code for empty base
 l1425	sta ($00),y
@@ -188,44 +180,43 @@ l1425	sta ($00),y
 	dey
 	bpl l1425
 
-	ldx #$04
-l1334	lda $04,x       // gaps in bases
-	sta $fd
+	ldx #$04        // ---- place gaps in bases ---
+l1334	lda $04,x       // get n-th base address from address list
+	sta $fd         // (starting with 2nd lowest, as lowest must not have gaps)
 	lda $05,x
 	sta $fe
 	lda #$00
-	sta $fa
-	lda $8e         // get one RAND bit
-	and #$01
+	stx $fa         // backup loop counter (X)
+        jsr get_rand
+	and #$01        // get one RAND bit
+        ldx $fa
 	clc
-	adc l124a,x
+	adc l124a,x     // number of gaps in this level from table + random 0 or 1
 	sta $fb
-	stx $00         // backup loop counter (X)
-l144c	jsr $e094       // get RAND number
-	lda $8d
-	and #$0f
-	cmp #$09
-	bcs l144c
+l144c	lda #$09        // -- start of loop across number of gaps --
+        jsr get_rand_lim  // calc random X-offset in range 2..18
+        clc
 	adc #$01
 	asl
 	tay
 	lda #$00
 	sta $fc
-	lda ($fd),y
-	bne l144c
+	lda ($fd),y     // empty base and no gap yet at this X-off?
+	bne l144c       // no -> try again
 	dey
 	dey
 	dey
+        bmi l1470
 	lda ($fd),y
 	beq l1470
-	lda #$80
+	lda #$80        // mark there's already a gap 2 to left
 	ora $fc
 	sta $fc
 l1470	iny
 	iny
 	lda ($fd),y
 	beq l147c
-	lda #$20
+	lda #$20        // mark there's already a gap 1 to left
 	ora $fc
 	sta $fc
 l147c	iny
@@ -233,14 +224,16 @@ l147c	iny
 	iny
 	lda ($fd),y
 	beq l1489
-l1483	lda #$08
+	lda #$08        // mark there's already a gap 1 to right
 	ora $fc
 	sta $fc
 l1489	iny
 	iny
+        cpy #$16
+        bcs l1495
 	lda ($fd),y
 	beq l1495
-l148f	lda #$02
+	lda #$02        // mark there's already a gap 2 to right
 	ora $fc
 	sta $fc
 l1495	dey
@@ -248,54 +241,47 @@ l1495	dey
 	dey
 	dey
 	lda $fc
-	beq l14b7
-l149d	and #$28
-	beq l14b7
-l14a1	lda $fc
+	beq l14b7       // no gaps in vincinity -> OK
+	and #$28
+	beq l14b7       // no directly adjacent gaps -> OK
+	lda $fc
 	and #$a0
 	cmp #$a0
-	beq l14b7
-l14a9	lda $fc
+	beq l14b7       // double-wide gap on left side -> OK
+	lda $fc
 	and #$0a
-	cmp #$0a
+	cmp #$0a        // double-wide gap on right side -> OK
 	beq l14b7
-l14b1	lda $fa
-	bne l144c
-l14b5	sty $fa
-l14b7	lda #$20
+l14b7	lda #$20        // finally create the gap
 	sta ($fd),y
 	iny
 	sta ($fd),y
-	dec $fb
+	dec $fb         // loop for next gap on this level
 	bpl l144c
-	ldx $00
-	ldy #$00
+	ldx $fa         // loop for next level
 	dex
 	dex
 	bmi l14cd
 	jmp l1334
 
-l14cd	ldx #$00        // ladders
+l14cd	ldx #$00        // --- place ladders between all levels  ---
 l13cf	lda $04,x       // get n-th base address from address list
-	sta $fd
+	sta $fd         // this is address of the level containing top of the ladder
 	lda $05,x
 	sta $fe
 	stx $00         // backup iteration counter
-l14d9	jsr $e094       // get RAND number
-	lda $8d
-	and #$1f
-	cmp #$14
-	bcs l14d9
-	adc #$01
+l14d9	lda #$16-2      // get random X-offset within the level (1..21)
+        jsr get_rand_lim
 	clc
+	adc #$01
         tay
-	lda ($fd),y
+	lda ($fd),y     // location of ladder-top still empty and no gap?
 	bne l14d9
 	tya
 	clc
 	adc #$58
 	tay
-	lda ($fd),y
+	lda ($fd),y     // location of ladder-bottom still empty and no gap?
 	bne l14d9
 	ldx #$04        // loop to draw ladder across 4 rows
 l14f6	tya
@@ -335,11 +321,8 @@ l152d	sta ($fc),y     // initialize egg counter: 0 or BLOCKED
 	dex
 	bpl l1513
 
-l15f3	jsr $e094       // --- place power gain at random position ---
-	lda $8d
-	and #$7f
-	cmp #$58
-	bcs l15f3
+l15f3	lda #$58        // --- place power gain at random position ---
+        jsr get_rand_lim
 	tax
 	lda $0384,x     // start of egg directory
 	bne l15f3       // blocked -> try again
@@ -348,11 +331,8 @@ l15f3	jsr $e094       // --- place power gain at random position ---
 
 	lda #$04        // --- distribute 4 pieces of wood randomly ---
 	sta $00
-l1558	jsr $e094       // get RAND number
-	lda $8d
-	and #$7f
-	cmp #$58
-	bcs l1558
+l1558	lda #$58
+        jsr get_rand_lim
 	tax
 	lda $0384,x
 	bne l1558       // try again if position blocked or used already
@@ -363,11 +343,8 @@ l1558	jsr $e094       // get RAND number
 
 	lda #$36         // --- distribute 54 eggs randomly across levels ---
 	sta $00
-l153a	jsr $e094       // get RAND number
-	lda $8d
-	and #$7f
-	cmp #$58
-	bcs l153a
+l153a	lda #$58
+        jsr get_rand_lim
 	tax
 	lda $0384,x     // start of egg directory
 	cmp #$03
@@ -378,11 +355,8 @@ l153a	jsr $e094       // get RAND number
 
 	lda #$20        // --- distribute 32 stones randomly (possibly on top of items) ---
 	sta $00
-l1576	jsr $e094       // get RAND number
-	lda $8d
-	and #$7f
-	cmp #$58
-	bcs l1576
+l1576	lda #$58
+        jsr get_rand_lim
 	tax
 	lda $0384,x
 	bmi l1576       // position blocked (ladder) -> try again
@@ -515,28 +489,29 @@ l164f   lda l1240+2,x   // base address
         ldx #$00        // base level index
         jsr spawn_snake
 
-// ----------------------------------------------------------------------------
-//                      // Place player home randomly
-//      FIXME change this into sub-function to be called by F7
+        jsr place_player_home
 
-l1670	lda $8c         // --- select random start position for player ---
-	and #$03        // random level 0..3
-	asl
+        jmp l1700       // enter main loop (which is a chain of jumps)
+
+// ----------------------------------------------------------------------------
+//                      // Sub-function: Place player home at random position
+
+place_player_home
+l1670	jsr get_rand    // get RAND number
+	and #$03<<1     // select random level (0..3)*2
 	tax
 	lda l1240+2,x
 	sta $fa
 	lda l1240+3,x
 	sta $fb
-l1680	jsr $e094       // get RAND number
-	lda $8d
-	and #$1f
-	cmp #$14
-	bcs l1680
+        lda #$14
+	jsr get_rand_lim  // select random X offset
+        clc
 	adc #$01
 	tay
 	lda ($fa),y     // selected position blank?
 	cmp #$20
-	beq l1680       // no -> try another random position
+	beq l1670       // no -> try another random position
 	sty $fd
 	lda $fb
 	sta $09
@@ -552,11 +527,11 @@ l16a8	sta $08
 	ldy #$18
 l16ac	lda ($08),y     // home pos empty?
 	cmp #$20
-	bne l1680       // no -> try another random position
-l16b2	dey
+	bne l1670       // no -> try another random position
+	dey
 	cpy #$16
 	bcs l16ac
-l16b7	lda $fa
+        lda $fa
 	clc
 	adc $fd
 	sec
@@ -565,7 +540,7 @@ l16b7	lda $fa
 	lda #$0c        // code for normal player" figure
 	jsr draw_player
 	ldy #$00
-	lda #$1d        // draw home
+	lda #$1d        // char for home base
 	sta ($08),y
 	iny
 	sta ($08),y
@@ -594,6 +569,23 @@ l16b7	lda $fa
 	iny
 	iny
 	sta ($10),y
+        rts
+
+        // FIXME do not delete snake char; delete home from snake background
+remove_player_home
+        lda #$20        // blank character
+	ldy #$00
+        sta ($08),y
+	iny
+	sta ($08),y
+	iny
+	sta ($08),y
+	ldy #$16
+	sta ($08),y
+	iny
+	iny
+	sta ($08),y
+        rts
 
 // ----------------------------------------------------------------------------
 //                      // Player actions
@@ -899,12 +891,22 @@ l1951	lda $0348       // player climbing up/down ladder?
 	bne l1958
         jmp l1897       // yes -> handle equiv. regular "up" movement
 l1958	jsr undraw_player
-                        // FIXME in top level allow only one row to avoid bumping into base
-	lda $00         // move player up by 2 rows
-	sec
+        lda $00
+        sta $10
+        lda $01
+        sta $11
+        jsr get_base_idx_and_xoff
+	lda $00
+        cpx #$03*2      // in top-most level, whose height is one row less?
+        bne l195a
+        sec             // yes -> move player up only by one row
+	sbc #$16
+	bcs l1963
+	bcc l195b
+l195a   sec             // move player up by two rows
 	sbc #$2c
 	bcs l1963
-	dec $01
+l195b	dec $01
 l1963	sta $00
 	lda #$0c        // draw player figure; normal form
 	jsr draw_player
@@ -929,7 +931,7 @@ l197e	ldy #$17        // check if player at home:
 	bcc l19ae       // no -> abort
 	cmp #$11
 	bcs l19ae
-                        // FIXME must allow 1 or 2 if no eggs left
+                        // FIXME must allow 1 or 2 if no more eggs left
         lda $0341       // carrying at least 3 eggs?
         and #$7f
         cmp #$03
@@ -937,21 +939,8 @@ l197e	ldy #$17        // check if player at home:
 	lda $034d
 	cmp #$08        // player attacked by dino mum?
 	bcs l19ae       // yes -> abort
-	lda #$20        // blank behind player? (simplification)
-	cmp $0346
-	bne l19ae       // no -> abort
-	ldy #$00
-        sta ($08),y     // delete home (FIXME do not delete snake char; delete home from snake background)
-	iny
-	sta ($08),y
-	iny
-	sta ($08),y
-	ldy #$16
-	sta ($08),y
-	iny
-	sta ($08),y
-	iny
-	sta ($08),y
+        jsr undraw_player
+        jsr remove_player_home
         lda #$00        // clear power gain
 	sta $034b
 	lda $0341       // add number of carried eggs to score
@@ -966,7 +955,8 @@ l197e	ldy #$17        // check if player at home:
         bne l19a0
         lda #$00        // yes -> game won!
         jmp post_game
-l19a0   jmp l1670       // -> move player to random position
+l19a0   jsr place_player_home // -> move home & player to random position
+        jmp l1e0d
 
                         // --- F7 to pick up wood (& light fire)? ---
 l19ae	ldy #$16        // read char one row below player
@@ -994,7 +984,7 @@ l1a61	ldy #$16        // read char 1 row below player
         bmi l1a80       // carrying wood -> abort
 	lda $034b       // power gain?
 	beq l1a65
-        lda #$14        // yes -> max 20 eggs
+        lda #$16        // yes -> max 21 eggs
         bne l1a66
 l1a65   lda #$03        // no -> max 3 eggs
 l1a66   sec
@@ -1278,8 +1268,7 @@ l1d47	cmp #$01
 	bcc l1d4d
 	lda #$01        // char for base with egg
 l1d4d	ldy #$16
-	sta ($0a),y     // draw new base char
-                        // TODO color
+	sta ($0a),y     // draw new base char (FIXME to be safe also set color)
 	ldy #$2c        // offset to row below base
 	lda #$16        // char for upper half of stone without base
 	sta ($0a),y
@@ -1380,8 +1369,7 @@ l1dd9	sta $0a
         and #$ff-$10    // anything below stone?
         bne l1de0
         // FIXME enable this after changing egg placement to be less distributed
-	//jsr $e094       // get RAND number: randomly spawn snake on this level
-	//lda $8d
+	//jsr get_rand    // get RAND number: randomly spawn snake on this level
         //cmp #64         // probability 64/256 ~ 25%
         //bcs l1de0
         lda $0a
@@ -1808,8 +1796,7 @@ l206e	sta $1000,x
 	dex
 	bpl l206e
 
-	jsr $e094       // get RAND number
-	lda $8d
+	jsr get_rand    // get RAND number
 	ora #$1f        // OR lower bits to ensure minimum time delay 31
 	sta $034c       // time until next attack
 	lda #$04        // fire status back to 4
@@ -1940,7 +1927,7 @@ l2109   cmp #$1e        // reached burning fire?
         bne l2102
 
 l2112   lda #$04        // player bitten by snake
-        // TODO draw coiled snake next to player (to make cause visible)
+        // FIXME draw snake next to player (to make cause visible)
         jmp post_game
 
 l2111   dey
@@ -2011,12 +1998,13 @@ spawn_snake
         sta ($02),y
         txa
         pha
-        jsr $e094       // get RAND number
-        pla
-        tax
-	lda $8d         // set timer until uncoiling
+        jsr get_rand    // get RAND number
         and #$3f
         adc #$10
+        tay
+        pla
+        tax
+	tya             // set timer until uncoiling
         sta $035f,x
 l2621   rts
 
@@ -2200,11 +2188,12 @@ undraw_player
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function: calc base level idx and Xoff
+//                      // Sub-function: calc base level idx (*2) and X-offset
 //                      // Parameter: $10-$11: address - must be in row ABOVE a base
 //                      // Results: A := X-offset
 //                      //          X := base index * 2
-//                      //          status.C := 1=OK, 0=nOK
+//                      //          status.C := 1=OK, 0=nOK (addr out of range)
+//                      // Note: the bottom-most level has index 0, above 2 etc.
 
 get_base_idx_and_xoff
         ldx #$06        // iterate across all bases
@@ -2299,10 +2288,11 @@ l2301   sta $03de       // BAK:=val%10
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function for printing a status message
-//                      // - Parameter: $10-$11: message text address
+//      Zero-terminated message strings (max 20 chars fit in message box)
+//      Note 1: Characters are screen codes, not ASCII
+//      Note 2: Only upper-case is possible (i.e. ORed $80) as others are
+//              replaced by user-defined characters at $1c00
 
-        // zero-terminated message strings (max 20 chars fit in message box)
 l12e3   .byt $86,$89,$92,$85,$20        // "FIRE IS BURNING"
         .byt $89,$93,$20
         .byt $82,$95,$92,$8e,$89,$8e,$87,$00
@@ -2348,11 +2338,20 @@ l1330   .byt $94,$92,$99,$20            // "TRY AGAIN? (Y/N)"
         .byt $81,$87,$81,$89,$8e,$20
         .byt $a8,$99,$af,$8e,$a9,$00
 
-l132l   .word l1320
+//      Table of strings indexed by "post-game" function parameter
+l132x   .word l1320
         .word l1321
         .word l1322
         .word l1323
         .word l1324
+
+// ----------------------------------------------------------------------------
+// Sub-function for printing a status text to the message box. The text has
+// to be zero-terminated; the text is displayed centered within the box.
+//
+// - Parameters: $10-$11: message text address
+// - Side-effects: invalidates registers A, X, Y
+// - Results: none
 
 prt_message
         ldx #22-2       // clear content
@@ -2365,10 +2364,10 @@ l2502   lda ($10),y
         beq l2503
         iny
         bne l2502
-l2503   sty $03de       // calc message offset: 20-len/2
-        lda #20
-        sec
-        sbc $03de
+l2503   tya
+        eor #$ff        // calculate 20-len/2: start offset for centering
+        sec             // calculate "-len" by taking 2-complement (~A+1)
+        adc #20
         lsr
         tax
         ldy #$00        // copy message until zero-byte
@@ -2383,7 +2382,11 @@ l2505   lda #$50        // set timer for automatically clearing message
         rts
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function for clearing the status text
+// Sub-function for clearing the text in the message box
+//
+// - Parameters: none
+// - Side-effects: invalidates registers A, X
+// - Results: none
 
 clr_message
         ldx #22
@@ -2394,8 +2397,11 @@ l2510   lda l126e-1,x
         rts
 
 
-#if 0
-clr_screen_color
+// ----------------------------------------------------------------------------
+// This sub-function sets the color for the complete screen to a fixed value
+
+#if 0 /* currently unused */
+set_screen_color
         lda #<$9400+19*22-1
         sta $00
         lda #>$9400+19*22-1
@@ -2414,14 +2420,73 @@ l2521   sta ($00),y
 #endif
 
 // ----------------------------------------------------------------------------
-//                      // Sub-function upon death or game win
-//                      // Parameter: A = cause
+//                      // Sub-function: get random number
+
+//                      // Sub-function to get random number in range 0..255
+get_rand
+        ldy $03ee
+        cpy #$04
+        bcc l2531
+        jsr $e094       // get 4 new RAND numbers
+        ldy #$00
+l2531   lda $03ed
+        eor $8c,y
+        sta $03ed
+        iny
+        sty $03ee
+        rts
+
+// This sub-function has to be called once during start-up to initialize
+// the pseudo-random number generator management.
+
+init_rand_gen
+	jsr $e09b       // seed pseudo-random number generator (with VIA timer)
+        jsr $e094       // get initial set of RAND numbers
+        lda $8c         // XOR to improve starting quality
+        eor $8d
+        eor $8e
+        eor $8f
+        sta $03ed
+        ldy #$04        // initialize rand buffer to empty
+        sty $03ee
+        rts
+
+// ----------------------------------------------------------------------------
+// Sub-function to get random number in range 0 to value passed in A
+//
+// Note: Numbers will not be evenly distributed, as those in range 0..256%A
+//       occur one more than others as result of iteration below. As most
+//       limits are <<256 this is deemed acceptable.
+//
+//       Alternatively, we could calculate (RAND16 * A) >> 16, but this would
+//       require firstly a 16-bit rand value (with 8 distribution is still
+//       uneven) and performing 8*16 bit multiplication, or 24-bit addition
+//       for A times. (The idea behind the formula is using 16-bit fix-point
+//       arithmetic. Then RAND16 is a value in range [0..1[ which we scale
+//       to [0..A[ via multiplication.)
+//
+get_rand_lim
+        sta $03ef       // backup limit value
+        jsr get_rand    // get random number in A
+        sec
+l2532   sbc $03ef       // iterate to calculate N modulo A
+        bcs l2532
+        adc $03ef
+        rts
+
+// ----------------------------------------------------------------------------
+// This sub-function is called when the player dies, or the goal is reached.
+// The function prints a message indicating the cause and asks if the game
+// should be restarted. If the user answers no, the game exits back to BASIC.
+//
+// Parameter: A = cause
+
 post_game
         asl
         tax
-        lda l132l,x
+        lda l132x,x
         sta $10
-        lda l132l+1,x
+        lda l132x+1,x
         sta $11
         jsr prt_message
 
@@ -2454,7 +2519,11 @@ l2411   lda #$00
 
 
 // ----------------------------------------------------------------------------
-//                      // Hook for keyboard presses
+// This sub-function is installed as hook for keyboard presses, which is called
+// from within the timer interrupt handler. The intention is to record the
+// keypress in a local variable, so that the keypress is not missed if the
+// key is released again before the part of the main loop which polls $cb
+// is reached.
 
 key_int
         lda $cb         // code of last key read during interrupt
