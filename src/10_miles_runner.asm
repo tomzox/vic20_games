@@ -1,4 +1,4 @@
-//
+// ----------------------------------------------------------------------------
 // Copyright 1982-1984,2019 by T.Zoerner (tomzo at users.sf.net)
 // All rights reserved.
 //
@@ -21,27 +21,49 @@
 // ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// ----------------------------------------------------------------------------
+
+_load_base = $1200  // start of BASIC RAM
+_game_base = $1400  // start of ML
+
+        // P00 header: used by loader to determine destination address; not copied into RAM
+        .word _load_base
+
+        // Following code is copied into RAM; align PC "*" with that base
+        * = _load_base
+
+        // Single-line BASIC program: "SYS5120"
+        .byt $00,$0b,$12,$0a,$00,$9e,$35,$31,$32,$30
+
+        // Fill space until start of ML program
+        .dsb _game_base-*, 0
+        .text
+
+// ----------------------------------------------------------------------------
+// Description of data in ZP
 //
+// $00-$01: 16-bit address of enemy figure on screen
+// $02-$03: 16-bit address of player figure on screen
+// $04:     0:moving to the right; !0: to the left
+// $05:     screen column of player projectile
+// $06-$07  16-bit address of player projectile on screen
+// $08:     screen column of enemy projectile
+// $09-$0a  16-bit address of enemy projectile on screen
+// $0b:     screen column of enemy
+// $0c:     screen column of player
 
-// P00 header
-_start = $1388
-.word _start
+#define MEM_EXTENSION
+#ifdef MEM_EXTENSION
+#define ADR_SCREEN $1000        /* screen buffer base address with >= 8kB extension */
+#else
+#define ADR_SCREEN $1e00        /* screen buffer base address without extension */
+#endif
 
-.text
-* = _start
-
-// data in ZP
-// $00   // 16-bit address of enemy figure on screen
-// $02   // 16-bit address of player figure on screen
-// $04   // 0:moving to the right; !0: to the left
-// $05   // screen column of player projectile
-// $06   // 16-bit address of player projectile on screen
-// $08   // screen column of enemy projectile
-// $09   // 16-bit address of enemy projectile on screen
-// $0b   // screen column of enemy
-// $0c   // screen column of player
-
-      	lda #$40
+// ----------------------------------------------------------------------------
+// Game entry point
+// - must be mapped to fixed address so that BSIC can jump to it
+//
+	lda #$40        // initialize game speed factor
 	sta l14dd
 	nop
 // ----------------------------------------------------------------------------
@@ -50,9 +72,9 @@ _start = $1388
 l138e	jsr $e518       // call ROM function E518: system initialization
 	lda #$08        // bit 4-7: background=black; 3:non-reverse mode; 0-2: border=black
 	sta $900f       // set colors in VIC ($900F)
-	lda #$15
+	lda #<ADR_SCREEN+$15
 	sta $00
-	lda #$1e        // MSB of screen address $1E00
+	lda #>ADR_SCREEN+$15  // MSB of screen address
 	sta $01
 	sta $03
 	ldy #$00
@@ -60,8 +82,8 @@ l138e	jsr $e518       // call ROM function E518: system initialization
 //                      // ----- draw borders on screen on all sides -----
 	ldx #$00
 l13a6	lda #$66        // "block" character code: border character
-	sta $1e00,x     // write into top row on screen
-	sta $1fe4,x     // write into bottom row on screen
+	sta ADR_SCREEN+0,x      // write into top row on screen
+	sta ADR_SCREEN+22*22,x  // write into bottom row on screen
 	inx
 	nop
 	sta ($00),y     // write left border
@@ -83,11 +105,11 @@ l13c2	inc $04
 	sty $04
 	sty $05
 	sty $08
-	lda #$17        // LSB of enemy start position (1st column of 1st row within borders)
+	lda #<ADR_SCREEN+1*22+1  // enemy start position (1st column of 1st row within borders)
 	sta $00
-	lda #$1e        // MSB of enemy start position (screen base address $1E00)
+	lda #>ADR_SCREEN+1*22+1
 	sta $01
-	lda #$d9        // LSB of player start position: middle of bottom row (within borders)
+	lda #<ADR_SCREEN+21*22+11  // player start position: middle of bottom row
 	sta $02
 	lda #$01
 	sta $0b
@@ -97,8 +119,8 @@ l13c2	inc $04
 	sta ($02),y
 //                      // ----- wait for the player to start the game -----
 l13ec	lda $cb         // poll for key-press
-	cmp #$20        // SPACE key pressed?
-	beq l13fc       // yes -> start game
+	cmp #$40        // any key pressed?
+	bcc l13fc       // yes -> start game
 l13f2	lda $911f       // poll joystick port
 	nop
 	and #$08        // extract bit paddle/fire
@@ -117,7 +139,7 @@ l1405	cmp #$29        // key 's'
 	bne l140c
 l1409	jsr l1504
 //l140c	cmp #$27        // key F1: fire new projectile
-l140c	cmp #$1A        // key 'x': fire new projectile (F1 is not mapped well in VICE)
+l140c	cmp #$20        // space key: fire new projectile (F1 is not mapped well in VICE)
 	bne l1424
 l1410	lda $05
 	cmp #$00
@@ -230,8 +252,7 @@ l14d6	inx
 	cpx #$7f        // inner delay loop: 127 cycles
 	bcc l14d6
 	iny
-	l14dd = * + 1
-; Instruction parameter $14dd accessed.
+	l14dd = * + 1   // game speed is modified by code
 	cpy #$30        // outer delay loop: WARNING: self-modified code! ($14dd)
 	bcc _delay
 //                      //
@@ -239,10 +260,10 @@ l14d6	inx
 //                      //
 //                      // ----- check if enemy reached end of last row (above player) -----
 	lda $00         // LSB of enemy address
-	cmp #$b6        // compare with LSB of $1FB6 ($1E00 + 19*22 + 20)
+	cmp #<ADR_SCREEN+19*22+20  // compare LSB
 	bcc l14f0
 	lda $01         // compare MSB of enemy address
-	cmp #$1f
+	cmp #>ADR_SCREEN+19*22+20
 	bcc l14f0
 l14ee	rts             // hard & ugly exit of game (screen is not cleared)
 	nop             // never reached (instead "READY" for BASIC)
@@ -311,7 +332,7 @@ l1544	inx
 	lda ($09),y
 	cmp #$51        // hit player figure?
 	bne l1554
-l1550	jsr _start      // yes -> player lost; restart game
+l1550	jsr _game_base  // yes -> player lost; restart game
 	nop
 l1554	cmp #$66        // hit the screen border?
 	bne l155b
@@ -362,3 +383,4 @@ l158c	inc $00
 	bcc l1588
 	dec l14dd       // reduce event loop delay -> increase speed for next level of game
 	jmp l138e       // restart (hopefully sub $e518 resets the stack pointer?)
+// ----------------------------------------------------------------------------

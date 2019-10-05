@@ -80,3 +80,11 @@ here, as it nicely shows the learning curve, starting with this initial
 attempt, (actually followed by a Pac-Man derivate not included here as the
 code for generating the maze is missing), then the already much larger snakes
 game, and finally the dino-eggs game.
+
+## How to run the games
+
+First install the [VICE](http://vice-emu.sourceforge.net/) VIC-20 emulator.
+Then you can run the game by simply specifying the name of one of the game
+executables (which you find in the `prg` directory of this repository) on the
+command line.  If the program does not start automatically, type "run" and
+press the RETURN key.

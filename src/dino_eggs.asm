@@ -23,9 +23,21 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // ----------------------------------------------------------------------------
 
-// P00 header
-_start_data = $1240
-.word _start_data
+_load_base = $1200  // start of BASIC RAM
+_game_base = $1240  // start of ML
+
+        // P00 header: used by loader to determine destination address; not copied into RAM
+        .word _load_base
+
+        // Following code is copied into RAM; align PC "*" with that base
+        * = _load_base
+
+        // Single-line BASIC program: "SYS5120"
+        .byt $00,$0b,$12,$0a,$00,$9e,$35,$31,$32,$30
+
+        // Fill space until start of ML program
+        .dsb _game_base-*, 0
+        .text
 
 // ----------------------------------------------------------------------------
 // Description of memory layout:
@@ -85,9 +97,6 @@ _start_data = $1240
 //   OR replace by dino stampede through the level (3x3 chars each)
 // - add eggs piled above bases
 // - increase difficulty level after won game (e.g. more/faster snake)
-
-.text
-* = _start_data
 
 // ----------------------------------------------------------------------------
 //      Read-only data

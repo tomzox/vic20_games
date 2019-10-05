@@ -42,3 +42,4 @@ moving left or right.
 
 When the player has managed to hit the enemy, or inversely the enemy has hit
 the player, the game freezes for a few seconds and then starts all over again.
+Each time the game is won, the next round will run a little faster.
