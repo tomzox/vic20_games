@@ -84,7 +84,13 @@ game, and finally the dino-eggs game.
 ## How to run the games
 
 First install the [VICE](http://vice-emu.sourceforge.net/) VIC-20 emulator.
-Then you can run the game by simply specifying the name of one of the game
+My games require 8kB memory extension, so you need to configure VICE once
+accordingly: Start xvic, then press F12, select "Machine settings" then check
+"Block 1 (8kB)"; quit the menu by pressing Escape. Then save these settings via
+F12 -> "Settings management" -> "Save current settings". Note if this is not
+done, you'll only see a black screen in the games.
+
+Now you can run the games by simply specifying the name of one of the game
 executables (which you find in the `prg` directory of this repository) on the
-command line.  If the program does not start automatically, type "run" and
-press the RETURN key.
+`xvic` command line.  If the program does not start automaticallya after having
+been loaded, type "run" into the VICE window and press the RETURN key.
