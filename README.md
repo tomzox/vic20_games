@@ -41,6 +41,8 @@ game); also there's no sound yet. The code implementing the snakes somehow got
 lost (except for the jump to the start of that code), so that I had to
 re-implement it as I remember it.
 
+For more details see the [Dino-Eggs documentation](docs/dino_eggs.md).
+
 ## Snakes game
 
 <IMG ALIGN="center" SRC="images/slg_snap_play.png" ALT="Screenshot Snakes game">
@@ -67,6 +69,8 @@ of the screen, firing at the player at the bottom of the screen. With each
 iteration, the ship is coming closer to the player. The player has evade the
 ship's fire by moving left or right, and try hitting the ship with his own
 missiles before the ship reaches him at the bottom.
+
+For more details see the [10-Miles-Runner documentation](docs/10_miles_runner.md).
 
 I have no idea where the name of this game came from. Implementation is very
 short at just under 350 lines assembly. Apparently this was a direct

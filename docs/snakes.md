@@ -66,8 +66,8 @@ player automatically starts eating.
 | Apple | ![apple](../images/slg_sym_apple.png) | Grants 250 scorepoints and 2 skill points. The symbol is left randomly by snakes instead of excrement. |
 | Snake spawn | ![snake heads](../images/slg_sym_snakehead.png) | Spawns a new snake from the middle of the screen and grants 2 skill points.  Up to 6 snakes can be active at the same time. This symbol is left randomly by snakes instead of excrement. |
 | Snake tail | | Stepping onto a snake's tail provides 7 score points. If the SHIFT/fire key is held at the same time, the player starts eating the snake; this scores 1782 points. |
-| Snake head | | Stepping onto a snake's tail provides 7 score points. If the SHIFT/fire key is held at the same time, the player starts eating the snake; this scores 1782 points. |
-| Ghost | ![ghost](../images/slg_sym_dead_player.png) | When the player is eaten by a snake, it finally excretes this symbol, which marks the position where the player would resume when it is revived. |
+| Snake head | | Encountering a snake's head is to be avoided, as it results in death. |
+| Ghost | ![ghost](../images/slg_sym_dead_player.png) | When the player is eaten by a snake, it eventually excretes this symbol, which marks the position where the player would resume when it is revived. |
 
 ## Race to start
 
@@ -120,23 +120,25 @@ Once all the letters are picked up, you can end the game using the F1 key.
 The game does not end automatically, since you can still use the remaining
 food and possible special items on the field to increase your score. Ending
 the game will get you a bonus of 3000 points if all snakes are dead, else 2000.
-Additionally there's a bonus of 200 for each remaining skill point.
+Additionally there's a bonus of 200 score points for each remaining skill point.
+
+Upon start of each the player has 3 lifes: One in use, and two reserves.  The
+number of reserves is shown in the bottom left corner of the screen.  A life
+can be lost either by being bitten by a snake, or by defeat when skill has run
+out:
+
+* When bitten by a snake, the player remains in "ghost" state on screen. It can
+  be revived by hitting the "F1" key, if there are spare lifes left. Else, F1
+  ends the game.
+* When defeating using F1, the level restarts immediately with one less spare life,
+  if there is one left; else the game ends. Defeating is allowed only when
+  skill points are at zero.
 
 When the game is ended sucessfully, a new level of the game starts
 automatically after a short pause. All the levels work identically, except that
 the speed of the movement increases. Your score value is carried across into
 the new level, but you get 1 new fresh life, or a bonus if you still have two
 spare lifes.
-
-Regarding player lifes: Upon start of each the player has 3 lifes: One in use,
-and two reserves.  The number of reserves is shown in the bottom left corner of
-the screen.  A life can be lost either by being bitten by a snake, or by defeat
-when skill has run out:
-
-* When bitten by a snake, the player remain in "ghost" state on screen. It can
-  be revived by hitting the "F1" key, if there are spare lifes left. Else, F1
-  ends the game.
-* When defeating using F1, the level restarts immediately with one less spare life.
 
 *Have fun!*
 
