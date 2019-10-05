@@ -22,7 +22,7 @@ and a few adaptions and extensions noted below. As a result the games now play
 nicely in the excellent [VICE](http://vice-emu.sourceforge.net/) VIC-20
 emulator.
 
-## Dio-Eggs game
+## Dino-Eggs game
 
 <IMG ALIGN="center" SRC="images/egg_snap_start.png" ALT="Screenshot Dino-Eggs game">
 
@@ -43,7 +43,7 @@ re-implement it as I remember it.
 
 ## Snakes game
 
-<IMG ALIGN="center" SRC="images/slg_snap_start.png" ALT="Screenshot Snakes game">
+<IMG ALIGN="center" SRC="images/slg_snap_play.png" ALT="Screenshot Snakes game">
 
 The game simulates a bunch of snakes wriggling around on a field, between which
 the player needs to run around and pick up items. Of course the player also has
@@ -53,6 +53,8 @@ I do not recall where I got the idea for this game; I guess I saw a similar
 game maybe running on an Arcade machine in a movie or TV show. What I liked
 best about it is the movement of the snakes. I recall I had some trouble coming
 up with a game objective built around those cool snakes.
+
+For more details see the [Snakes documentation](docs/snakes.md).
 
 ## 10-Miles-Runner
 
