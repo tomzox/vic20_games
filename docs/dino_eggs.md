@@ -21,25 +21,26 @@ The following table shows the keys that are used to control the player in the ga
 
 The following special actions can be triggered by F7 or space:
 
-* Pick up eggs, if there are any below the base (and player's hands are not full yet).
-* Pick up wood, if there are any below the base (and player's hands are not full yet).
-* Put down up to 3 carried eggs, if base below player is empty.
-* Put down wood, if base below player is empty.
-* Start a fire, if there is wood at the base below the player (i.e. two pieces of wood combined start a fire)
+* Pick up eggs, if there are any below the base (and the player's hands are not full yet).
+* Pick up wood, if there is any below the base (and the player's hands are not full yet).
+* Put down up to 3 carried eggs, or wood, if the base below the player is empty.
+* Start a fire, if the player carries wood and there is wood at the base below
+  the player (i.e. two pieces of wood combined start a fire).
 * When in the home station and at least 6 eggs are carried, beam the eggs away
   to the mother station. If these were the last eggs, this also ends the game.
+  Else the player is beamed to a random new location on any of the bases.
 
 ## Meaning of symbols on screen
 
-<IMG ALIGN="center" SRC="../images/egg_snap_stonefall.png" ALT="Screenshot Dino-Eggs game: Falling stone">
+![Screenshot: Falling stone](../images/egg_snap_stonefall.png)
 
 | Item | Symbol | Meaning |
 |:-----|:------:|:--------|
 | Player | ![falling player](../images/egg_sym_player.png) | Represents the player figure under your control. It changes shape depending on the direction it's moving at. |
-| Ladder between bases | ![Ladder](../images/egg_sym_ladder.png) | These ladders can be used to climb up or down between levels. |
+| Ladder between bases | ![Ladder](../images/egg_sym_ladder.png) | Ladders can be used to climb up or down between levels. |
 | Dino eggs | ![Dino eggs](../images/egg_sym_eggs.png) | This symbol shows three eggs stored below a base. Equivalently there can be only one or two eggs. |
 | Wood | ![Wood](../images/egg_sym_wood.png) | This is a piece of wood stored below a base. |
-| Power gain | ![Power gain](../images/egg_sym_power_gain.png) | This special item grants you temporarily additional power to carry more eggs. |
+| Power gain | ![Power gain](../images/egg_sym_power_gain.png) | This special item grants you temporarily additional power to carry more eggs. You still can't carry eggs and wood at the same time. |
 | Snake egg | ![Snake egg](../images/egg_sym_snake_egg.png) | This is a snake egg. Don't pick this up or they will bite you. |
 | Stone under base | ![Stone](../images/egg_sym_stone.png) | This is a stone under which other items may be hidden. |
 | Coiled-up snake | ![Snake](../images/egg_sym_snake_coiled.png) | This is a snake in coiled-up state. It may start moving any time, unless resting next to a fire. |
@@ -53,18 +54,19 @@ The game objective is picking up all the eggs and depositing them in the home
 station.  To pick up eggs, the player moves to a base beneath which eggs are
 visible and presses F7.  The player can normally carry at most 6 eggs at a
 time. There is a special "power gain" symbol that can be picked up to gain
-strength for 24 eggs - but only for one trip to the home station.
+strength for 24 eggs - but only for one trip to the home station. The items
+currently carried are shown in the box in the lower-left corner of the screen.
 
 To deposit the eggs, move the player into the middle of the home station and
 press F7.  This will unload the eggs, increase the score by one point for each
-egg, and then beam the player to a new random location. The game is won when no
-eggs are left in the playing field.  (Note the home station allows beaming up
-only with at least 6 carried eggs. Take care when using the power-gain not to
-end up with less than 6 eggs on the field, or you'll not be able to complete
-the game.)
+egg (shown in the box in the lower-right corner of the screen), and then beam
+the player to a new random location. The game is won when no eggs are left in
+the playing field.  (Note the home station allows beaming up only with at least
+6 carried eggs. Take care when using the power-gain not to end up with less
+than 6 eggs on the field, or you'll not be able to complete the game.)
 
 To move between levels, the ladders can be used. The upper layers have gaps,
-across which you can jump by holding SHIFT while moving. It's possible to
+across which you maybe able to jump by holding SHIFT while moving. It's possible to
 return to a lower level by jumping or falling down. However take care not to
 fall too far, or you'll die when hitting the ground. You may also notice that
 when leaving the screen to the left or right, the player inexplicably shows up
@@ -80,7 +82,7 @@ Generally stay out of the way of snakes, or they will bite and kill you
 instantly.  Thankfully you can run faster than them; you can also dispatch them
 by jumping on top of them.
 
-To keep the Dino Mum away, the player has to start a fire but picking up a
+To keep the Dino Mum away, the player has to start a fire by picking up a
 piece of wood and put it down on top of another piece. (Take care not to keep
 standing in the burning fire.) While a fire is burning, there's a digit below
 counting down from 9 to 1 to indicate how soon it will go out. To avoid this,
@@ -89,7 +91,7 @@ fail to adhere, there'll first be a warning "make a fire", then "dino mum
 coming". If there's still no fire started afterward, she will come and stomp
 you:
 
-<IMG ALIGN="center" SRC="../images/egg_snap_dino_foot.png" ALT="Screenshot Dino-Eggs game: Stomping foot">
+![Screenshot: Stomping foot](../images/egg_snap_dino_foot.png)
 
 *Have fun!*
 

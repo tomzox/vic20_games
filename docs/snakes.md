@@ -10,14 +10,14 @@ place. To cross such a field, the player has to hold down the SHIFT key in
 addition to the direction (or press FIRE button on the joystick).  Any such
 field that is crossed costs one "skill" point, as shown in the upper-left
 corner.  When all skill is depleted, the player can convert score points to
-skill. If score is insufficient, the player may defeat using F1. But the player
-can also earn skill and score by killing snakes, picking up the bonus letters,
-or the special "apply" bonus symbols.
+skill. If score is insufficient, the player may defeat using F1, which costs
+one life. But the player can earn skill and score by killing snakes, picking up
+the bonus letters, or the special "apply" bonus symbols.
 
-Note snakes are moving completely at random. In particular, they are not aware
-of the player and will not move towards it intentionally. However there's a 25%
-chance in each move for turning, so it's generally not safe to stand next to
-the path where snake is heading.
+Note snakes are moving completely at random. They are not aware of the player
+and will not move towards it intentionally. However there's a 25% chance in
+each move for turning, so it's generally not safe to stand next to the path
+where snake is heading.
 
 ## Game controls
 
@@ -122,19 +122,19 @@ food and possible special items on the field to increase your score. Ending
 the game will get you a bonus of 3000 points if all snakes are dead, else 2000.
 Additionally there's a bonus of 200 score points for each remaining skill point.
 
-Upon start of each the player has 3 lifes: One in use, and two reserves.  The
-number of reserves is shown in the bottom left corner of the screen.  A life
-can be lost either by being bitten by a snake, or by defeat when skill has run
-out:
+Upon start of each game level the player has 3 lifes: One in use, and two
+reserves.  The number of reserves is shown in the bottom left corner of the
+screen.  A life can be lost either by being bitten by a snake, or by defeat
+when skill has run out:
 
 * When bitten by a snake, the player remains in "ghost" state on screen. It can
   be revived by hitting the "F1" key, if there are spare lifes left. Else, F1
-  ends the game.
+  ends the game with a display of the score summary.
 * When defeating using F1, the level restarts immediately with one less spare life,
   if there is one left; else the game ends. Defeating is allowed only when
   skill points are at zero.
 
-When the game is ended sucessfully, a new level of the game starts
+When the game level is ended sucessfully, a new level of the game starts
 automatically after a short pause. All the levels work identically, except that
 the speed of the movement increases. Your score value is carried across into
 the new level, but you get 1 new fresh life, or a bonus if you still have two
